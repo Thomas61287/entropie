@@ -13,7 +13,14 @@
   --font:   'Space Mono', monospace;
 }
 
-html, body {
+html {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+body {
   margin: 0; padding: 0;
   width: 100vw; height: 100vh;
   overflow: hidden;
@@ -21,8 +28,9 @@ html, body {
   font-family: var(--font);
   font-size: 11px;
   color: var(--text);
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 85vh 15vh;
+  grid-template-columns: 100vw;
 }
 
 /* ── Watermark ── */
@@ -40,18 +48,18 @@ html, body {
 
 /* ── Two 3D scenes ── */
 .scene-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 50vw 50vw;
   width: 100vw;
   height: 85vh;
-  flex: 0 0 85vh;
   overflow: hidden;
 }
 
 #canvas3DBeaker,
 #canvas3DRoom {
   display: block;
-  width: 50vw;
-  height: 85vh;
+  width: 50vw !important;
+  height: 85vh !important;
   cursor: grab;
   image-rendering: auto;
 }
@@ -62,7 +70,6 @@ html, body {
 .control-bar {
   width: 100vw;
   height: 15vh;
-  flex: 0 0 15vh;
   display: flex;
   align-items: center;
   justify-content: center;

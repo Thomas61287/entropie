@@ -1,7 +1,7 @@
 // 3D Beaker — cinematic Three.js scene
 // Glass cylinder + wireframe overlay + 3000 temperature-coloured particles + ripple rings
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 import { N, idx } from './fluid.js';
 import { WATER_SURFACE_FRAC } from './simulation.js';
 
@@ -44,7 +44,7 @@ export class BeakerViewer3D {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(W, H, false);
+    this.renderer.setSize(W, H);
     this.renderer.setClearColor(0x03030f, 1);
     this.renderer.shadowMap.enabled = false;
 
@@ -78,7 +78,7 @@ export class BeakerViewer3D {
   _resize() {
     const W = Math.round(window.innerWidth * 0.5);
     const H = Math.round(window.innerHeight * 0.85);
-    this.renderer.setSize(W, H, false);
+    this.renderer.setSize(W, H);
     this.camera.aspect = W / H;
     this.camera.updateProjectionMatrix();
   }

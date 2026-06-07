@@ -1,7 +1,7 @@
 // 3D Room — cinematic gas diffusion scene
 // Wireframe room + volumetric fog planes + infrared colour mapping + wall glow
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 
 const ROOM_W = 8.0;
 const ROOM_H = 3.4;
@@ -32,7 +32,7 @@ export class RoomViewer3D {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(W, H, false);
+    this.renderer.setSize(W, H);
     this.renderer.setClearColor(0x02020c, 1);
 
     this.scene  = new THREE.Scene();
@@ -70,7 +70,7 @@ export class RoomViewer3D {
   _resize() {
     const W = Math.round(window.innerWidth * 0.5);
     const H = Math.round(window.innerHeight * 0.85);
-    this.renderer.setSize(W, H, false);
+    this.renderer.setSize(W, H);
     this.camera.aspect = W / H;
     this.camera.updateProjectionMatrix();
   }
