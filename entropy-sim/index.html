@@ -3,211 +3,131 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Entropy in Motion V2</title>
+  <title>Entropy in Motion</title>
   <link rel="stylesheet" href="style.css">
+  <!-- importmap must precede any type="module" script -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three":         "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
 
-<header>
-  <h1>ENTROPY IN MOTION <span class="v2">V2</span></h1>
-  <div class="header-right">
-    <span class="tag">NLT MODULE · H1–H5 · DIFFUSIE · ENTROPIE · WARMTEOVERDRACHT</span>
-    <span class="time-display">t = <span id="fSimTime">0.0</span> s &nbsp;·&nbsp; <span id="fTimeScale">3</span>% realtime</span>
-  </div>
-</header>
+<div class="watermark">ENTROPY IN MOTION</div>
 
-<div class="app-grid">
+<!-- Two fullscreen 3D canvases -->
+<div class="scene-row">
+  <canvas id="canvas3DBeaker" style="display:block"></canvas>
+  <canvas id="canvas3DRoom"   style="display:block"></canvas>
+</div>
 
-  <!-- ── Column 1: Beaker ── -->
-  <div class="col-beaker">
+<!-- Minimal control bar -->
+<div class="control-bar">
+  <button id="btnDrop"  class="ctrl-btn primary">💧 Druppel</button>
+  <button id="btnReset" class="ctrl-btn">↺ Reset</button>
 
-    <!-- Normal mode: single beaker -->
-    <div id="normalBeakerWrap">
-      <canvas id="beakerCanvas" width="370" height="520"></canvas>
-      <div class="canvas-label">MAATBEKER — vloeistofdiffusie &nbsp;D ≈ 10⁻⁹ m²/s</div>
-    </div>
+  <div class="bar-divider"></div>
 
-    <!-- Split mode: two beakers side by side -->
-    <div id="splitBeakerWrap" style="display:none" class="split-row">
-      <div>
-        <canvas id="beakerCanvasSplitA" width="270" height="520"></canvas>
-        <div class="canvas-label" style="width:270px">WARM water</div>
-      </div>
-      <div>
-        <canvas id="beakerCanvasB" width="270" height="520"></canvas>
-        <div class="canvas-label" style="width:270px">KOUD water</div>
-      </div>
-    </div>
-
+  <div class="ctrl-group">
+    <span class="ctrl-label">Snelheid</span>
+    <input type="range" id="speedSlider" min="0.005" max="0.5" step="0.005" value="0.02">
+    <span class="ctrl-val" id="speedVal">2%</span>
   </div>
 
-  <!-- ── Column 2: Room + sub-graphs ── -->
-  <div class="col-middle">
-
-    <canvas id="roomCanvas" width="420" height="240"></canvas>
-    <div class="canvas-label">KAMER (bovenaanzicht) — gasdiffusie &nbsp;D ≈ 10⁻⁵ m²/s</div>
-
-    <canvas id="profileCanvas" width="420" height="68"></canvas>
-    <div class="canvas-label">
-      Concentratieprofiel C(x) &nbsp;—&nbsp;
-      <span style="color:#00ffcc">── simulatie</span>
-      &nbsp;<span style="color:rgba(255,140,0,0.8)">--- Fick analytisch</span>
-    </div>
-
-    <canvas id="mbCanvas" width="420" height="68"></canvas>
-    <div class="canvas-label">
-      Maxwell-Boltzmann snelheidsverdeling &nbsp;—&nbsp;
-      <span style="color:#00ffcc">▮ simulatie</span>
-      &nbsp;<span style="color:rgba(255,140,0,0.8)">— theoretisch</span>
-    </div>
-
+  <div class="ctrl-group">
+    <span class="ctrl-label">T inkt</span>
+    <input type="range" id="tempSlider" min="10" max="95" step="1" value="65">
+    <span class="ctrl-val" id="tempVal">65°C</span>
   </div>
 
-  <!-- ── Column 3: Side panel ── -->
-  <div class="side-panel">
+  <div class="bar-divider"></div>
 
-    <!-- Entropy graph -->
-    <div class="panel-block">
-      <h2>S(t) — Entropie</h2>
-      <canvas id="entropyCanvas" width="256" height="90"></canvas>
+  <button id="btnFysica" class="ctrl-btn">Fysica ▲</button>
+</div>
+
+<!-- Physics panel — slides in from right -->
+<div id="physicsOverlay" class="physics-overlay">
+  <div class="ov-header">
+    <span class="ov-title-main">FYSICA</span>
+    <button id="btnCloseOverlay" class="ctrl-btn close-btn">✕</button>
+  </div>
+
+  <div class="ov-block">
+    <div class="ov-section-title">S(t) — Entropie</div>
+    <canvas id="entropyCanvas" width="284" height="90" style="display:block"></canvas>
+    <div class="ov-time">t = <span id="fSimTime">0.0</span> s</div>
+  </div>
+
+  <div class="ov-block">
+    <div class="ov-section-title">S = k · ln(W)</div>
+    <div class="stat-grid">
+      <span class="sl">W (bezet)</span>           <span class="sv" id="fW">0</span>
+      <span class="sl">ln(W)</span>                <span class="sv" id="fLogW">0</span>
+      <span class="sl">S (J/K)</span>             <span class="sv cyan" id="fS">—</span>
+      <span class="sl">Gem. T (°C)</span>         <span class="sv" id="fT">—</span>
+      <span class="sl">Inktdekking</span>         <span class="sv" id="fCov">0 %</span>
     </div>
+  </div>
 
-    <!-- Live calculation (Upgrade 5) -->
-    <div class="panel-block">
-      <h2>S = k · ln(W) — Live</h2>
-      <div class="formula-grid">
-        <span class="fl">W</span>           <span class="fv" id="fW">0</span>
-        <span class="fl">ln(W)</span>        <span class="fv" id="fLogW">0</span>
-        <span class="fl">S (J/K)</span>      <span class="fv cyan" id="fS">—</span>
-        <span class="fl">ΔS dit frame</span> <span class="fv" id="fDeltaS">—</span>
-        <span class="fl">Gem. T</span>       <span class="fv" id="fT">—</span>
-        <span class="fl">Inktdekking</span>  <span class="fv" id="fCov">0 %</span>
-      </div>
+  <div class="ov-block">
+    <div class="ov-section-title">Grootheden</div>
+    <div class="stat-grid">
+      <span class="sl">D — Stokes-Einstein</span>   <span class="sv cyan" id="fD">—</span>
+      <span class="sl">Carnot η<sub>max</sub></span> <span class="sv" id="fCarnot">—</span>
+      <span class="sl">Osmotische druk Π</span>     <span class="sv" id="fOsmotic">—</span>
+      <span class="sl">ΔS thermisch</span>           <span class="sv" id="fCumDS">—</span>
     </div>
+    <div class="ov-formula">D = k<sub>B</sub>T/6πηr &nbsp;·&nbsp; Π = MRT &nbsp;·&nbsp; η = 1−T<sub>c</sub>/T<sub>h</sub></div>
+  </div>
 
-    <!-- Physics analytics (Upgrades 4, 6, 7, 10) -->
-    <div class="panel-block">
-      <h2>Fysica — Live Grootheden</h2>
-      <div class="formula-grid">
-        <span class="fl">D (Stokes-Einstein)</span> <span class="fv cyan" id="fD">—</span>
-        <span class="fl">Carnot η<sub>max</sub></span> <span class="fv" id="fCarnot">—</span>
-        <span class="fl">Osmotische druk Π</span>   <span class="fv" id="fOsmotic">—</span>
-        <span class="fl">Kans op omk. P</span>      <span class="fv" id="fIrrev">—</span>
-        <span class="fl">ΔS thermisch (cum.)</span> <span class="fv" id="fCumDS">—</span>
-      </div>
-      <div class="formula-eq">D = k<sub>B</sub>·T / (6π·η·r) &nbsp;·&nbsp; Π = M·R·T &nbsp;·&nbsp; η = 1−T<sub>c</sub>/T<sub>h</sub></div>
+  <div class="ov-block">
+    <div class="ov-section-title">Parameters</div>
+    <div class="ov-row">
+      <label>T water (°C)</label>
+      <input type="range" id="waterTempC" min="1" max="80" step="1" value="15">
+      <span class="ctrl-val" id="waterTempCVal">15</span>
     </div>
-
-    <!-- Physical parameters (Upgrade 2) -->
-    <div class="panel-block">
-      <h2>Fysische Constanten</h2>
-      <div class="control-row">
-        <label>T inkt (°C)</label>
-        <input type="range" id="inkTempC" min="10" max="95" step="1" value="65">
-        <span class="val" id="inkTempCVal">65.0</span>
-      </div>
-      <div class="control-row">
-        <label>T water (°C)</label>
-        <input type="range" id="waterTempC" min="1" max="80" step="1" value="15">
-        <span class="val" id="waterTempCVal">15.0</span>
-      </div>
-      <div class="control-row">
-        <label>D (×10⁻⁹ m²/s)</label>
-        <input type="range" id="D_nm2s" min="0.1" max="3.0" step="0.05" value="0.8">
-        <span class="val" id="D_nm2sVal">0.80</span>
-      </div>
-      <div class="control-row">
-        <label>η (mPa·s)</label>
-        <input type="range" id="viscosity" min="0.3" max="10" step="0.1" value="1.0">
-        <span class="val" id="viscosityVal">1.0</span>
-      </div>
-      <div class="control-row">
-        <label>Warmte α</label>
-        <input type="range" id="heatAlpha" min="0.1" max="5.0" step="0.05" value="1.5">
-        <span class="val" id="heatAlphaVal">1.5</span>
-      </div>
-      <div class="param-note">D ∝ T/η (Einstein-Stokes, H1) — warm water diffundeert sneller</div>
+    <div class="ov-row">
+      <label>D (×10⁻⁹ m²/s)</label>
+      <input type="range" id="D_nm2s" min="0.1" max="3.0" step="0.05" value="0.8">
+      <span class="ctrl-val" id="D_nm2sVal">0.80</span>
     </div>
-
-    <!-- Slow motion controls (Upgrade 1) -->
-    <div class="panel-block">
-      <h2>Tijdschaal — Slow Motion</h2>
-      <div class="speed-btns">
-        <button id="btn005x" class="btn-speed">0.05×</button>
-        <button id="btn05x"  class="btn-speed">0.5×</button>
-        <button id="btn1x"   class="btn-speed">1×</button>
-        <button id="btn2x"   class="btn-speed">2×</button>
-      </div>
-      <div class="control-row" style="margin-top:6px">
-        <label>Tijdschaal</label>
-        <input type="range" id="timeScaleSlider" min="0.005" max="2.0" step="0.005" value="0.03">
-        <span class="val" id="timeScaleSliderVal">3%</span>
-      </div>
-      <div class="btn-row" style="margin-top:6px">
-        <button id="btnPlayPause">⏸ Pause</button>
-        <button id="btnStep">▶| Frame</button>
-        <button id="btnSnapshot">📷 Snap</button>
-      </div>
-      <div class="hint-small">Spatiebalk = pause/play &nbsp;·&nbsp; → = één frame &nbsp;·&nbsp; D = druppel</div>
+    <div class="ov-row">
+      <label>η (mPa·s)</label>
+      <input type="range" id="viscosity" min="0.3" max="10" step="0.1" value="1.0">
+      <span class="ctrl-val" id="viscosityVal">1.0</span>
     </div>
-
-    <!-- Actions -->
-    <div class="panel-block">
-      <h2>Acties</h2>
-      <div class="btn-row">
-        <button id="btnDrop">💧 Druppel</button>
-        <button id="btnReset">↺ Reset</button>
-      </div>
-      <div class="btn-row" style="margin-top:5px">
-        <button id="btnToggleView">View: Combined</button>
-        <button id="btnSplit">Split: UIT</button>
-      </div>
-      <div class="btn-row" style="margin-top:5px">
-        <button id="btnVectors">Vectorveld: UIT</button>
-        <button id="btnGaussian">Gauss-overlay: UIT</button>
-      </div>
-      <div class="btn-row" style="margin-top:5px">
-        <button id="btnReverse" class="btn-danger">⏪ Tijdomkering</button>
-      </div>
-      <div class="btn-row" style="margin-top:5px">
-        <button id="btnExportCSV" class="btn-accent">📥 Export CSV</button>
-        <button id="btnReport"    class="btn-accent">📄 Rapport</button>
-      </div>
-
-      <!-- Reversibility note (Upgrade 16) -->
-      <div id="reverseNote" class="reverse-note" style="display:none">
-        <strong>TWEEDE HOOFDWET BEWEZEN</strong><br>
-        ΔS<sub>totaal</sub> ≥ 0 — tijdomkering vereist ΔS &lt; 0.<br>
-        De inkt verspreidt opnieuw: W ↑, chaos neemt toe.<br>
-        Kans op spontane herconcentratie: P = 10^<span id="fIrrev2"></span>
-      </div>
+    <div class="ov-row">
+      <label>Warmte α</label>
+      <input type="range" id="heatAlpha" min="0.1" max="5.0" step="0.05" value="1.5">
+      <span class="ctrl-val" id="heatAlphaVal">1.5</span>
     </div>
+  </div>
 
-    <!-- Event log (Upgrade 18) -->
-    <div class="panel-block">
-      <h2>Gebeurtenissenlog</h2>
-      <div id="eventLog" class="event-log"></div>
+  <div class="ov-block">
+    <div class="ov-section-title">Acties</div>
+    <div class="ov-btns">
+      <button id="btnReverse"   class="ctrl-btn danger full">⏪ Tijdomkering</button>
+      <button id="btnExportCSV" class="ctrl-btn full">📥 Export CSV</button>
     </div>
+  </div>
 
-    <!-- Formula reference -->
-    <div class="panel-block">
-      <h2>Formules (H1–H5)</h2>
-      <div class="info-text">
-        <span>∂C/∂t = D·∇²C</span> — Fick 2e wet (H1)<br>
-        <span>J = −D·∂C/∂x</span> — Fick 1e wet (H1)<br>
-        <span>S = k·ln(W)</span> — Boltzmann (H4)<br>
-        <span>ΔS = Q/T</span> — warmteoverdracht (H3)<br>
-        <span>η = 1−T<sub>c</sub>/T<sub>h</sub></span> — Carnot (H2)<br>
-        <span>D = k<sub>B</sub>T/6πηr</span> — Stokes-Einstein (H1)<br>
-        <span>ΔS<sub>totaal</sub> ≥ 0</span> — 2e hoofdwet (H5)
-      </div>
+  <div class="ov-block">
+    <div class="ov-section-title">Formules (H1–H5)</div>
+    <div class="ov-info">
+      <span>∂C/∂t = D·∇²C</span> — Fick 2e wet (H1)<br>
+      <span>J = −D·∂C/∂x</span> — Fick 1e wet (H1)<br>
+      <span>S = k·ln(W)</span> — Boltzmann (H4)<br>
+      <span>ΔS = Q/T</span> — warmteoverdracht (H3)<br>
+      <span>η = 1−T<sub>c</sub>/T<sub>h</sub></span> — Carnot (H2)<br>
+      <span>ΔS<sub>totaal</sub> ≥ 0</span> — 2e hoofdwet (H5)
     </div>
-
-  </div><!-- /side-panel -->
-</div><!-- /app-grid -->
-
-<!-- Cursor tooltip (Upgrade 19) -->
-<div id="tooltip" class="tooltip" style="display:none"></div>
+  </div>
+</div>
 
 <script type="module" src="src/main.js"></script>
 </body>
