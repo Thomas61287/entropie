@@ -1,13 +1,12 @@
 // 3D Beaker — cinematic Three.js scene
-// Glass cylinder + wireframe overlay + 3000 temperature-coloured particles + ripple rings
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 import { N, idx } from './fluid.js';
 import { WATER_SURFACE_FRAC } from './simulation.js';
 
-const PC    = 3000;
-const BR    = 1.18;   // beaker radius (world units)
-const BH    = 3.4;    // beaker height
+const PC     = 3000;
+const BR     = 1.18;
+const BH     = 3.4;
 const Y_SURF = BH * (0.5 - WATER_SURFACE_FRAC);
 const Y_BOT  = -BH * 0.46;
 const J_WATER = Math.floor(WATER_SURFACE_FRAC * N);
@@ -23,17 +22,18 @@ function w2g(wx, wy) {
   return [Math.max(1, Math.min(N, i)), Math.max(1, Math.min(N, j))];
 }
 
-// T_norm 0-1 → [r,g,b] (cool=#0044ff → mid=#ffdd00 → warm=#ff8800 → hot=#ff2200)
+// Infrared particle gradient:
+// cold=white (#ffffff) → cool=yellow (#ffff00) → warm=orange (#ff6600) → hot=red (#ff0000)
 function tempColor(T) {
-  if (T < 0.4) {
-    const s = T / 0.4;
-    return [s, 0.267 + s * 0.600, 1.0 - s];
-  } else if (T < 0.7) {
-    const s = (T - 0.4) / 0.3;
-    return [1.0, 0.867 - s * 0.334, 0];
+  if (T < 0.30) {
+    const s = T / 0.30;
+    return [1.0, 1.0, 1.0 - s];           // white → yellow
+  } else if (T < 0.65) {
+    const s = (T - 0.30) / 0.35;
+    return [1.0, 1.0 - s * 0.60, 0];      // yellow → orange
   } else {
-    const s = (T - 0.7) / 0.3;
-    return [1.0, 0.533 - s * 0.400, 0];
+    const s = (T - 0.65) / 0.35;
+    return [1.0, 0.40 - s * 0.40, 0];     // orange → pure red
   }
 }
 
@@ -45,8 +45,7 @@ export class BeakerViewer3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(W, H);
-    this.renderer.setClearColor(0x03030f, 1);
-    this.renderer.shadowMap.enabled = false;
+    this.renderer.setClearColor(0x000000, 1);  // pure black background
 
     this.scene  = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(44, W / H, 0.1, 80);
@@ -64,8 +63,7 @@ export class BeakerViewer3D {
 
     this._ripples   = [];
     this._waveT     = 0;
-    this._dropState = null; // { progress, nx, landed }
-    this._wasActive = false;
+    this._dropState = null;
 
     this._lights();
     this._beaker();
@@ -84,60 +82,55 @@ export class BeakerViewer3D {
   }
 
   _lights() {
-    this.scene.add(new THREE.AmbientLight(0x10182a, 2.0));
-    this.scene.add(new THREE.HemisphereLight(0x001144, 0x000000, 0.7));
+    // Neutral-warm white ambient — no blue/green tint so glass stays clear
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
-    const p1 = new THREE.PointLight(0x00eedd, 2.6, 22);
-    p1.position.set(2.4, 2.2, 2.2);
-    this.scene.add(p1);
+    // Main fill: warm white from above-right
+    const fill = new THREE.PointLight(0xffeedd, 2.0, 24);
+    fill.position.set(3, 3, 3);
+    this.scene.add(fill);
 
-    const p2 = new THREE.PointLight(0x2233ff, 1.2, 16);
-    p2.position.set(-2.2, -1.2, -2.2);
-    this.scene.add(p2);
+    // Subtle cool backlight for depth
+    const back = new THREE.PointLight(0x8899cc, 0.6, 18);
+    back.position.set(-2, -1, -2);
+    this.scene.add(back);
 
-    this._innerLight = new THREE.PointLight(0x0055ff, 0.5, 4);
+    // Inner glow — brightens with ink
+    this._innerLight = new THREE.PointLight(0xff6600, 0.0, 4);
     this._innerLight.position.set(0, 0, 0);
     this.scene.add(this._innerLight);
   }
 
   _beaker() {
-    // Glass shell — very transparent
-    const glassMat = new THREE.MeshPhysicalMaterial({
-      color:        0xaaccff,
-      transparent:  true,
-      opacity:      0.14,
-      roughness:    0.04,
-      metalness:    0.05,
-      transmission: 0.88,
-      side:         THREE.DoubleSide,
-      depthWrite:   false,
+    // ── Glass shell: NO transmission (causes green artefacts in WebGL) ──
+    const glassMat = new THREE.MeshStandardMaterial({
+      color:       0xccddff,
+      transparent: true,
+      opacity:     0.12,
+      roughness:   0.05,
+      metalness:   0.0,
+      side:        THREE.DoubleSide,
+      depthWrite:  false,
     });
-    const shell = new THREE.Mesh(
+    this.scene.add(new THREE.Mesh(
       new THREE.CylinderGeometry(BR * 1.06, BR, BH, 48, 1, true),
-      glassMat);
-    this.scene.add(shell);
+      glassMat));
 
-    // Bottom
+    // Flat bottom
     const bot = new THREE.Mesh(new THREE.CircleGeometry(BR, 48), glassMat);
     bot.rotation.x = -Math.PI / 2;
     bot.position.y = -BH / 2;
     this.scene.add(bot);
 
-    // Top rim torus
-    const rim = new THREE.Mesh(
-      new THREE.TorusGeometry(BR * 1.06, 0.03, 8, 48),
-      new THREE.MeshStandardMaterial({ color: 0x88ccee, roughness: 0.18, metalness: 0.45 }));
-    rim.position.y = BH / 2;
-    this.scene.add(rim);
-
-    // Wireframe overlay (cyan edges, sparse)
-    const wireGeo = new THREE.CylinderGeometry(BR * 1.06, BR, BH, 14, 3, true);
+    // ── Bright cyan wireframe overlay ──
     const wireMat = new THREE.MeshBasicMaterial({
-      color: 0x00ffcc, wireframe: true, transparent: true, opacity: 0.10 });
-    this.scene.add(new THREE.Mesh(wireGeo, wireMat));
+      color: 0x00ffcc, wireframe: true, transparent: true, opacity: 0.80 });
+    this.scene.add(new THREE.Mesh(
+      new THREE.CylinderGeometry(BR * 1.06, BR, BH, 12, 3, true),
+      wireMat));
 
-    // Horizontal edge rings (tick marks)
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.22 });
+    // Horizontal ring ticks
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.70 });
     for (let k = 1; k <= 4; k++) {
       const ty = Y_BOT + (k / 4.8) * (Y_SURF - Y_BOT);
       const pts = [];
@@ -145,21 +138,21 @@ export class BeakerViewer3D {
         const ang = (a / 64) * Math.PI * 2;
         pts.push(new THREE.Vector3(Math.cos(ang) * BR * 1.065, ty, Math.sin(ang) * BR * 1.065));
       }
-      this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), edgeMat));
-
-      // short tick mark
-      const tkMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.30 });
-      const tkPts = [
-        new THREE.Vector3(BR * 1.065, ty, 0),
-        new THREE.Vector3(BR * 1.22,  ty, 0),
-      ];
-      this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(tkPts), tkMat));
+      this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), ringMat));
+      // tick
+      this.scene.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(BR * 1.065, ty, 0),
+          new THREE.Vector3(BR * 1.22,  ty, 0),
+        ]),
+        new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.80 })));
     }
 
-    // Water body
+    // ── Water body: deep blue, clearly visible ──
     const waterH = BH * (1 - WATER_SURFACE_FRAC) - 0.06;
-    this.waterMat = new THREE.MeshPhysicalMaterial({
-      color: 0x041218, transparent: true, opacity: 0.70, roughness: 0.25 });
+    this.waterMat = new THREE.MeshStandardMaterial({
+      color: 0x001a4d, transparent: true, opacity: 0.85,
+      roughness: 0.30, metalness: 0.0 });
     const waterBody = new THREE.Mesh(
       new THREE.CylinderGeometry(BR * 0.97, BR * 0.95, waterH, 48),
       this.waterMat);
@@ -167,29 +160,20 @@ export class BeakerViewer3D {
     this.scene.add(waterBody);
 
     // Animated water surface
-    this.surfGeo = new THREE.PlaneGeometry(BR * 2 * 0.96, BR * 2 * 0.96, 28, 28);
-    this.surfMat = new THREE.MeshPhysicalMaterial({
-      color: 0x1a4466, transparent: true, opacity: 0.42,
-      roughness: 0.12, metalness: 0.22 });
+    this.surfGeo = new THREE.PlaneGeometry(BR * 2 * 0.96, BR * 2 * 0.96, 24, 24);
+    this.surfMat = new THREE.MeshStandardMaterial({
+      color: 0x0033aa, transparent: true, opacity: 0.55,
+      roughness: 0.15, metalness: 0.10 });
     this.surfMesh = new THREE.Mesh(this.surfGeo, this.surfMat);
     this.surfMesh.rotation.x = -Math.PI / 2;
     this.surfMesh.position.y = Y_SURF;
     this.scene.add(this.surfMesh);
-
-    // Gloss highlight
-    const glossMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 });
-    const glossPts = [
-      new THREE.Vector3(-BR * 0.90, BH * 0.44, BR * 0.24),
-      new THREE.Vector3(-BR * 0.86, -BH * 0.38, BR * 0.20),
-    ];
-    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(glossPts), glossMat));
   }
 
   _particles() {
     const pos = new Float32Array(PC * 3);
     const col = new Float32Array(PC * 3);
 
-    // Scatter particles randomly inside the beaker (below surface)
     for (let p = 0; p < PC; p++) {
       const angle = Math.random() * Math.PI * 2;
       const r     = Math.sqrt(Math.random()) * BR * 0.88;
@@ -197,7 +181,8 @@ export class BeakerViewer3D {
       pos[p*3]   = Math.cos(angle) * r;
       pos[p*3+1] = yy;
       pos[p*3+2] = Math.sin(angle) * r;
-      col[p*3] = 0.04; col[p*3+1] = 0.05; col[p*3+2] = 0.18;
+      // Start cold-white so they're immediately visible
+      col[p*3] = 0.8; col[p*3+1] = 0.8; col[p*3+2] = 0.8;
     }
 
     this.pPos = pos;
@@ -210,8 +195,8 @@ export class BeakerViewer3D {
       new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
 
     this.pMat = new THREE.PointsMaterial({
-      size: 0.058, vertexColors: true,
-      transparent: true, opacity: 0.88,
+      size: 0.07, vertexColors: true,
+      transparent: true, opacity: 1.0,
       depthWrite: false, blending: THREE.AdditiveBlending,
       sizeAttenuation: true,
     });
@@ -223,21 +208,19 @@ export class BeakerViewer3D {
   _dropSphere() {
     this.dropMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.10, 16, 12),
-      new THREE.MeshPhysicalMaterial({
-        color: 0x180636, emissive: 0x2a0050, emissiveIntensity: 0.7,
-        transparent: true, opacity: 0.94 }));
+      new THREE.MeshStandardMaterial({
+        color: 0xff2200, emissive: 0xff1100, emissiveIntensity: 1.2,
+        transparent: true, opacity: 0.95 }));
     this.dropMesh.visible = false;
     this.scene.add(this.dropMesh);
   }
 
-  // Called by main.js when a drop should start falling
   startDrop(nx = 0.5) {
     if (this._dropState && !this._dropState.landed) return;
     this._dropState = { nx, progress: 0, landed: false };
     this.dropMesh.visible = true;
   }
 
-  // Called by main.js when the drop has been committed to the simulation
   notifyDropLanded() {
     this._spawnRipples();
     if (this._dropState) this._dropState.landed = true;
@@ -247,10 +230,10 @@ export class BeakerViewer3D {
   _spawnRipples() {
     for (let i = 0; i < 3; i++) {
       const mat = new THREE.MeshBasicMaterial({
-        color: 0x44aaff, transparent: true, opacity: 0.75,
+        color: 0xff4400, transparent: true, opacity: 0.80,
         side: THREE.DoubleSide, depthWrite: false,
       });
-      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.01, 0.035, 40), mat);
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.01, 0.04, 40), mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.y = Y_SURF + 0.012;
       if (this._dropState) {
@@ -261,10 +244,10 @@ export class BeakerViewer3D {
     }
   }
 
-  update(sim, dropAnim, timeScale) {
+  update(sim, dropAnim) {
     this._waveT += 0.018;
 
-    // Water surface wave animation
+    // Water surface wave
     const posArr = this.surfGeo.attributes.position.array;
     const vCount = this.surfGeo.attributes.position.count;
     for (let v = 0; v < vCount; v++) {
@@ -274,16 +257,13 @@ export class BeakerViewer3D {
     }
     this.surfGeo.attributes.position.needsUpdate = true;
 
-    // Water colour tints toward ink
-    const stats = sim.getStats(0);
-    const inkAmt = Math.min(1, stats.inkCoverage / 18);
-    this.waterMat.color.setRGB(
-      0.04 + inkAmt * 0.07,
-      0.07 + inkAmt * 0.02,
-      0.12 + inkAmt * 0.04);
-    this._innerLight.intensity = 0.3 + inkAmt * 0.9;
+    // Water colour: shifts red as ink fills
+    const stats   = sim.getStats(0);
+    const inkFrac = Math.min(1, stats.inkCoverage / 25);
+    this.waterMat.color.setRGB(0.0, 0.10 + inkFrac * 0.05, 0.30 - inkFrac * 0.15);
+    this._innerLight.intensity = inkFrac * 1.8;
 
-    // Drop sphere animation
+    // Drop fall
     if (this._dropState && !this._dropState.landed) {
       this._dropState.progress = Math.min(1, this._dropState.progress + 0.028);
       const wx = (this._dropState.nx - 0.5) * 2 * BR * 0.82;
@@ -296,7 +276,7 @@ export class BeakerViewer3D {
       if (r.delay > 0) { r.delay--; return true; }
       r.scale += 0.045;
       r.mesh.scale.setScalar(r.scale);
-      r.mesh.material.opacity = Math.max(0, 0.75 - r.scale * 0.46);
+      r.mesh.material.opacity = Math.max(0, 0.80 - r.scale * 0.46);
       if (r.mesh.material.opacity <= 0) {
         this.scene.remove(r.mesh);
         r.mesh.geometry.dispose();
@@ -306,25 +286,25 @@ export class BeakerViewer3D {
       return true;
     });
 
-    // Particle update — temperature colour + fluid velocity
+    // ── Particle update ──────────────────────────────────────────────────────
     const vxArr  = sim.fluid.vx;
     const vyArr  = sim.fluid.vy;
     const inkArr = sim.ink.C;
     const tmpArr = sim.heat.T;
-    const P = this.pPos;
-    const V = this.pVel;
+    const P   = this.pPos;
+    const V   = this.pVel;
     const col = this.pGeo.attributes.color.array;
 
     for (let p = 0; p < PC; p++) {
       const [si, sj] = w2g(P[p*3], P[p*3+1]);
       const gid = idx(si, sj);
 
-      const c  = inkArr[gid] || 0;
-      const T  = tmpArr[gid] || 0;
+      const c   = inkArr[gid] || 0;
+      const T   = tmpArr[gid] || 0;
       const fvx = (vxArr[gid] || 0) * 0.18;
       const fvy = (vyArr[gid] || 0) * 0.18;
 
-      // Velocity: fluid drag + Brownian noise
+      // Velocity: fluid + Brownian noise
       const br = 0.003 + T * 0.004;
       V[p*3]   = V[p*3]   * 0.88 + fvx + (Math.random()-0.5)*br;
       V[p*3+1] = V[p*3+1] * 0.88 - fvy + (Math.random()-0.5)*br;
@@ -341,15 +321,18 @@ export class BeakerViewer3D {
         P[p*3] *= s; P[p*3+2] *= s;
         V[p*3] *= -0.22; V[p*3+2] *= -0.22;
       }
-      if (P[p*3+1] > Y_SURF)      { P[p*3+1] = Y_SURF;      V[p*3+1] =  Math.abs(V[p*3+1]) * 0.18; }
+      if (P[p*3+1] > Y_SURF)       { P[p*3+1] = Y_SURF;       V[p*3+1] =  Math.abs(V[p*3+1]) * 0.18; }
       if (P[p*3+1] < Y_BOT + 0.02) { P[p*3+1] = Y_BOT + 0.02; V[p*3+1] = Math.abs(V[p*3+1]) * 0.18; }
 
-      // Temperature colour × concentration brightness
+      // ── Colour: ALWAYS vivid, temp-based infrared ──
+      // Cold particles (T≈0, c≈0): dim white (visible but not blinding)
+      // Hot ink particles: bright red/orange at full intensity
       const [r, g, b] = tempColor(T);
-      const bright = 0.06 + c * 0.94;
-      col[p*3]   = r * bright;
-      col[p*3+1] = g * bright;
-      col[p*3+2] = b * bright;
+      // Brightness: base 0.25 so cold water is always visible, scales up with heat+ink
+      const bright = 0.25 + T * 0.55 + c * 0.20;
+      col[p*3]   = Math.min(1, r * bright);
+      col[p*3+1] = Math.min(1, g * bright);
+      col[p*3+2] = Math.min(1, b * bright);
     }
 
     this.pGeo.attributes.position.needsUpdate = true;
@@ -357,11 +340,9 @@ export class BeakerViewer3D {
     this.pGeo.setDrawRange(0, PC);
   }
 
-  // Spawn particles at a splash point (world x, y)
   spawnAt(wx, wy, count = 300) {
     let n = 0;
     for (let p = 0; p < PC && n < count; p++) {
-      // Pick parked or buried particles (below beaker floor)
       if (this.pPos[p*3+1] > Y_SURF + 0.5) {
         const a = Math.random() * Math.PI * 2;
         const r = Math.random() * 0.16;

@@ -33,7 +33,7 @@ export class RoomViewer3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(W, H);
-    this.renderer.setClearColor(0x02020c, 1);
+    this.renderer.setClearColor(0x000000, 1);
 
     this.scene  = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 80);
@@ -76,26 +76,24 @@ export class RoomViewer3D {
   }
 
   _lights() {
-    this.scene.add(new THREE.AmbientLight(0x080812, 2.5));
-    this.scene.add(new THREE.HemisphereLight(0x080820, 0x000000, 0.5));
+    // Very dark ambient so infrared glow stands out
+    this.scene.add(new THREE.AmbientLight(0x06060a, 2.0));
 
-    const corner = new THREE.PointLight(0x0022aa, 0.6, 12);
-    corner.position.set(-3.5, 2.8, -3.5);
-    this.scene.add(corner);
-
-    this._srcLight = new THREE.PointLight(0x0044ff, 0.4, 5);
-    this._srcLight.position.set(0, 0.5, 0);
+    // Warm source light at centre — colour updated each frame in update()
+    this._srcLight = new THREE.PointLight(0xff4400, 0.6, 7);
+    this._srcLight.position.set(0, 0.6, 0);
     this.scene.add(this._srcLight);
 
-    // Ceiling fill
-    const ceil = new THREE.PointLight(0x111133, 0.3, 10);
-    ceil.position.set(0, ROOM_H - 0.2, 0);
-    this.scene.add(ceil);
+    // Dim cool fill from one corner so wireframe is readable
+    const fill = new THREE.PointLight(0x0a1830, 0.4, 14);
+    fill.position.set(-3.5, 2.8, -3.5);
+    this.scene.add(fill);
   }
 
   _room() {
+    // White wireframe at 40% opacity so room shape is clearly visible on black bg
     const wireMat = () => new THREE.MeshBasicMaterial({
-      color: 0x1a2a44, wireframe: true, transparent: true, opacity: 0.55 });
+      color: 0xffffff, wireframe: true, transparent: true, opacity: 0.40 });
 
     // Floor
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D, 16, 16), wireMat());
@@ -111,7 +109,6 @@ export class RoomViewer3D {
 
     // 4 Walls
     const wallDefs = [
-      // [pos, rotY]
       [[0, ROOM_H/2, -ROOM_D/2],  0],
       [[0, ROOM_H/2,  ROOM_D/2],  Math.PI],
       [[-ROOM_W/2, ROOM_H/2, 0],  Math.PI/2],
@@ -145,45 +142,45 @@ export class RoomViewer3D {
   }
 
   _fogPlanes() {
-    // Stacked horizontal planes — share one fog texture
-    // Denser near floor, sparser near ceiling
-    const heights  = [0.06, 0.38, 0.72, 1.08, 1.50, 2.05];
-    const opacities = [0.24, 0.20, 0.16, 0.12, 0.08, 0.05];
+    // Stacked horizontal planes — shared warm fog texture
+    // More planes, higher opacity so heat is clearly visible
+    const heights   = [0.04, 0.28, 0.55, 0.85, 1.20, 1.62, 2.10];
+    const opacities = [0.75, 0.65, 0.55, 0.42, 0.28, 0.16, 0.08];
 
-    this._fogPlanes = [];
+    this._fogPlaneMats = [];
     for (let k = 0; k < heights.length; k++) {
       const mat = new THREE.MeshBasicMaterial({
-        map:        this._fogTex,
+        map:         this._fogTex,
         transparent: true,
-        opacity:    opacities[k],
-        depthWrite: false,
-        blending:   THREE.AdditiveBlending,
-        side:       THREE.DoubleSide,
+        opacity:     opacities[k],
+        depthWrite:  false,
+        blending:    THREE.AdditiveBlending,
+        side:        THREE.DoubleSide,
       });
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_D), mat);
       plane.rotation.x = -Math.PI / 2;
       plane.position.y = heights[k];
       this.scene.add(plane);
-      this._fogPlanes.push(plane);
+      this._fogPlaneMats.push(mat);
     }
   }
 
   _source() {
-    // Glowing beaker / ink source in center
-    const beakerMat = new THREE.MeshStandardMaterial({
-      color: 0x0a1528, emissive: 0x001844, emissiveIntensity: 1.2,
-      transparent: true, opacity: 0.80, roughness: 0.35, metalness: 0.2,
+    // Glowing beaker — warm dark orange when idle, brightens as gas fills room
+    this._beakerMat = new THREE.MeshStandardMaterial({
+      color: 0x1a0800, emissive: 0x881400, emissiveIntensity: 1.0,
+      transparent: true, opacity: 0.85, roughness: 0.30, metalness: 0.15,
     });
     const beakerMesh = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.15, 0.42, 20),
-      beakerMat);
+      this._beakerMat);
     beakerMesh.position.set(0, 0.21, 0);
     this.scene.add(beakerMesh);
 
-    // Pulsing halo ring at base
+    // Pulsing halo — warm orange
     this._haloMat = new THREE.MeshBasicMaterial({
-      color: 0x0066ff, transparent: true, opacity: 0.30, side: THREE.DoubleSide });
-    const halo = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.38, 40), this._haloMat);
+      color: 0xff4400, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+    const halo = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.42, 48), this._haloMat);
     halo.rotation.x = -Math.PI / 2;
     halo.position.y = 0.005;
     this.scene.add(halo);
@@ -192,38 +189,53 @@ export class RoomViewer3D {
   }
 
   _updateFogTexture(gasRoom) {
-    const N   = gasRoom.N;
+    const GN  = gasRoom.N;
     const C   = gasRoom.C;
     const ctx = this._fogCtx;
-    const img = ctx.createImageData(N, N);
+    const img = ctx.createImageData(GN, GN);
     const d   = img.data;
 
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const c  = Math.min(1, C[i + j * N]);
-        const pi = (j * N + i) * 4;
+    // Amplify: sqrt(c * 400) maps tiny GasRoom values to visible 0-1 range.
+    // After 20x source fix: c≈0.001 near center → amp≈0.63 (clearly visible orange).
+    // Color thresholds applied to amplified value:
+    //   amp > 0.7  → #ff4400 bright red-orange, opacity 0.8
+    //   amp 0.35-0.7 → #ff8800 orange
+    //   amp 0.1-0.35 → #ffaa00 yellow-orange
+    //   amp < 0.1  → fade to invisible
 
-        if (c < 0.005) {
-          d[pi+3] = 0;
-          continue;
-        }
+    for (let j = 0; j < GN; j++) {
+      for (let i = 0; i < GN; i++) {
+        const c  = C[i + j * GN];
+        const pi = (j * GN + i) * 4;
+
+        if (c < 1e-6) { d[pi + 3] = 0; continue; }
+
+        const amp = Math.min(1, Math.sqrt(c * 400));
 
         let r, g, b, a;
-        if (c < 0.18) {
-          const s = c / 0.18;
-          r = Math.round(220 * s); g = Math.round(50 * s * s); b = 0;
-          a = Math.round(210 * s);
-        } else if (c < 0.55) {
-          const s = (c - 0.18) / 0.37;
-          r = 220; g = Math.round(50 + 170 * s); b = 0;
-          a = Math.round(210 + 25 * s);
+        if (amp < 0.08) {
+          // Barely a trace — very dim dark red
+          const s = amp / 0.08;
+          r = Math.round(120 * s); g = 0; b = 0;
+          a = Math.round(60 * s);
+        } else if (amp < 0.35) {
+          // Dark red → #ffaa00 yellow-orange
+          const s = (amp - 0.08) / 0.27;
+          r = 255; g = Math.round(80 + 90 * s); b = 0;
+          a = Math.round(140 + 80 * s);
+        } else if (amp < 0.70) {
+          // #ffaa00 → #ff8800 orange (fully opaque)
+          const s = (amp - 0.35) / 0.35;
+          r = 255; g = Math.round(170 - 34 * s); b = 0;
+          a = Math.round(220 + 10 * s);
         } else {
-          const s = (c - 0.55) / 0.45;
-          r = 255; g = Math.round(220 + 35 * s); b = Math.round(80 * s);
-          a = 235;
+          // #ff8800 → #ff4400 bright red-orange at core
+          const s = (amp - 0.70) / 0.30;
+          r = 255; g = Math.round(136 - 68 * s); b = 0;
+          a = 230;
         }
 
-        d[pi] = r; d[pi+1] = g; d[pi+2] = b; d[pi+3] = a;
+        d[pi] = r; d[pi + 1] = g; d[pi + 2] = b; d[pi + 3] = a;
       }
     }
 
@@ -234,38 +246,57 @@ export class RoomViewer3D {
   update(gasRoom) {
     this._haloT += 0.04;
 
-    // Pulsing halo around source
-    const pulse = 0.20 + 0.12 * Math.sin(this._haloT);
-    this._haloMat.opacity = pulse;
-    const haloScale = 1.0 + 0.08 * Math.sin(this._haloT * 1.3);
-    this._halo.scale.setScalar(haloScale);
+    const GN  = gasRoom.N;
+    const mid = Math.floor(GN / 2);
 
-    // Source light intensity tracks centre concentration
-    const N   = gasRoom.N;
-    const mid = Math.floor(N / 2);
-    const centreC = Math.min(1, gasRoom.C[mid + mid * N] * 3);
-    this._srcLight.intensity = 0.3 + centreC * 1.8;
-    this._srcLight.color.setRGB(0.0 + centreC * 0.4, 0.2 + centreC * 0.3, 1.0);
+    // Centre concentration — amplify same way as fog texture
+    const centreC = Math.min(1, Math.sqrt(gasRoom.C[mid + mid * GN] * 400));
 
-    // Wall glow based on edge concentration
+    // Total gas in room (normalised) — drives ambient warming
+    let totalC = 0;
+    const len = GN * GN;
+    for (let k = 0; k < len; k++) totalC += gasRoom.C[k];
+    const roomFill = Math.min(1, Math.sqrt(totalC * 20)); // 0→1 as room fills
+
+    // Pulsing warm halo
+    const pulse = 0.25 + 0.18 * Math.sin(this._haloT);
+    this._haloMat.opacity = Math.max(0.05, centreC * 0.6 + pulse * 0.25);
+    this._halo.scale.setScalar(1.0 + 0.10 * Math.sin(this._haloT * 1.2) + centreC * 0.4);
+
+    // Source light: always warm, brightens with concentration
+    // idle = dim orange, hot = bright red-orange
+    this._srcLight.intensity = 0.6 + centreC * 3.5;
+    this._srcLight.color.setRGB(
+      1.0,
+      0.35 - centreC * 0.20,   // less green at high concentration → more red
+      centreC < 0.1 ? 0.05 : 0,
+    );
+
+    // Beaker emissive brightens when gas is flowing
+    if (this._beakerMat) {
+      this._beakerMat.emissiveIntensity = 0.8 + centreC * 2.5;
+    }
+
+    // Background stays pure black — colours pop against it
+
+    // Wall glow — amplify tiny edge concentrations (same 400x boost)
     const wallC = [
-      wallEdgeAvg(gasRoom.C, N, 0), // left
-      wallEdgeAvg(gasRoom.C, N, 1), // right
-      wallEdgeAvg(gasRoom.C, N, 2), // front
-      wallEdgeAvg(gasRoom.C, N, 3), // back
+      wallEdgeAvg(gasRoom.C, GN, 0),
+      wallEdgeAvg(gasRoom.C, GN, 1),
+      wallEdgeAvg(gasRoom.C, GN, 2),
+      wallEdgeAvg(gasRoom.C, GN, 3),
     ];
     for (let w = 0; w < 4; w++) {
-      const c  = Math.min(1, wallC[w] * 12);
-      const mat = this._wallMeshes[w].material;
-      if (c > 0.005) {
-        mat.color.setRGB(c * 1.0, c * 0.3, 0);
-        mat.opacity = c * 0.22;
+      const amp = Math.min(1, Math.sqrt(wallC[w] * 400));
+      const mat  = this._wallMeshes[w].material;
+      if (amp > 0.02) {
+        mat.color.setRGB(1.0, amp * 0.45, 0);   // orange-red, never pure dark
+        mat.opacity = 0.10 + amp * 0.55;
       } else {
         mat.opacity = 0;
       }
     }
 
-    // Update fog texture
     this._updateFogTexture(gasRoom);
   }
 
