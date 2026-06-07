@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entropy in Motion — Inkt in Water</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>ENTROPY IN MOTION</h1>
+  <span class="tag">NLT MODULE · ENTROPIE · DIFFUSIE &amp; WARMTEOVERDRACHT</span>
+</header>
+
+<main>
+
+  <!-- Simulation area -->
+  <div class="sim-area">
+
+    <!-- Single mode canvas -->
+    <div id="singleContainer">
+      <canvas id="simCanvasA" width="560" height="560"></canvas>
+      <div class="hint">Klik om inkt te druppelen &nbsp;·&nbsp; Spatiebalk = willekeurige druppel</div>
+    </div>
+
+    <!-- Split mode: two smaller canvases side by side -->
+    <div id="splitContainer" style="display:none">
+      <div class="split-wrap">
+        <canvas id="simCanvasSplitA" width="370" height="560"></canvas>
+        <div class="split-hint">WARM — klik om te druppelen</div>
+      </div>
+      <div class="split-wrap">
+        <canvas id="simCanvasB" width="370" height="560"></canvas>
+        <div class="split-hint">KOUD — klik om te druppelen</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Side panel -->
+  <div class="side-panel">
+
+    <!-- Entropy graph -->
+    <div class="panel-block">
+      <h2>S(t) — Entropie over tijd</h2>
+      <canvas id="entropyCanvas" width="280" height="100"></canvas>
+    </div>
+
+    <!-- Live formula panel -->
+    <div class="panel-block">
+      <h2>Live Berekening — S = k · ln(W)</h2>
+      <div class="formula-grid">
+        <span class="fl">W (microtoestanden)</span><span class="fv" id="fW">0</span>
+        <span class="fl">ln(W)</span><span class="fv" id="fLogW">0</span>
+        <span class="fl">S = k · ln(W)</span><span class="fv cyan" id="fS">0.000 × 10⁻²⁰ J/K</span>
+        <span class="fl">Gemiddelde temp.</span><span class="fv" id="fT">—</span>
+        <span class="fl">Inktdekking</span><span class="fv" id="fCov">0.00 %</span>
+      </div>
+      <div class="formula-eq">k<sub>B</sub> = 1.38 × 10⁻²³ J/K &nbsp;·&nbsp; Boltzmann (H4)</div>
+    </div>
+
+    <!-- Physical parameters -->
+    <div class="panel-block">
+      <h2>Fysische Constanten</h2>
+
+      <div class="control-row">
+        <label>T inkt (°C)</label>
+        <input type="range" id="inkTempC" min="10" max="95" step="1" value="65">
+        <span class="val" id="inkTempCVal">65.0</span>
+      </div>
+      <div class="control-row">
+        <label>T water (°C)</label>
+        <input type="range" id="waterTempC" min="1" max="80" step="1" value="15">
+        <span class="val" id="waterTempCVal">15.0</span>
+      </div>
+      <div class="control-row">
+        <label>D (×10⁻⁹ m²/s)</label>
+        <input type="range" id="D_nm2s" min="0.1" max="3.0" step="0.05" value="0.8">
+        <span class="val" id="D_nm2sVal">0.8</span>
+      </div>
+      <div class="control-row">
+        <label>η (mPa·s)</label>
+        <input type="range" id="viscosity" min="0.3" max="10" step="0.1" value="1.0">
+        <span class="val" id="viscosityVal">1.0</span>
+      </div>
+      <div class="control-row">
+        <label>Warmte α</label>
+        <input type="range" id="heatAlpha" min="0.1" max="5.0" step="0.05" value="1.5">
+        <span class="val" id="heatAlphaVal">1.5</span>
+      </div>
+      <div class="param-note">
+        D ∝ T / η (Einstein-Stokes) — diffusie versnelt bij hogere temperatuur en lagere viscositeit
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="panel-block">
+      <h2>Acties</h2>
+      <div class="btn-row">
+        <button id="btnDrop">Druppel Inkt</button>
+        <button id="btnReset">Reset</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px">
+        <button id="btnToggleView">View: Combined</button>
+        <button id="btnSplit">Vergelijking: UIT</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px">
+        <button id="btnReverse" class="btn-danger">⏪ Tijd Omkeren</button>
+        <button id="btnExportCSV" class="btn-accent">📥 Export CSV</button>
+      </div>
+
+      <div id="reverseNote" class="reverse-note" style="display:none">
+        <strong>Tweede Hoofdwet bewezen.</strong><br>
+        Omkeren van de snelheden veroorzaakt chaos — de inkt verspreidt opnieuw.
+        Diffusie is <em>onomkeerbaar</em>: de verspreidde toestand heeft astronomisch
+        meer microtoestanden (W↑) dan de beginconcentratie. ΔS<sub>totaal</sub> ≥ 0.
+      </div>
+    </div>
+
+    <!-- Physics reference -->
+    <div class="panel-block">
+      <h2>Formules (module H1–H5)</h2>
+      <div class="info-text">
+        <span>∂T/∂t = α∇²T</span> — warmtediffusie (H1)<br>
+        <span>S = k · ln(W)</span> — Boltzmann entropie (H4)<br>
+        <span>ΔS = Q / T</span> — warmteoverdracht (H3)<br>
+        <span>D ∝ T / η</span> — Einstein-Stokes relatie (H1)<br>
+        <span>ΔS<sub>totaal</sub> ≥ 0</span> — 2e hoofdwet (H5)
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
