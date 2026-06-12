@@ -418,10 +418,12 @@ class BeakerViewer3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0x000000, 1);
-    this.renderer.setSize(W, H, false);
+    this.renderer.domElement.style.width  = '100%';
+    this.renderer.domElement.style.height = '100%';
+    this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
     // Debug
-    console.log('canvas3DBeaker size:', canvas.width, canvas.height);
+    console.log('beaker-canvas size:', canvas.width, canvas.height, 'client:', canvas.clientWidth, canvas.clientHeight);
     console.log('BeakerViewer3D WebGL context:', this.renderer.getContext());
 
     this.scene  = new THREE.Scene();
@@ -621,10 +623,12 @@ class RoomViewer3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0x000000, 1);
-    this.renderer.setSize(W, H, false);
+    this.renderer.domElement.style.width  = '100%';
+    this.renderer.domElement.style.height = '100%';
+    this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
     // Debug
-    console.log('canvas3DRoom size:', canvas.width, canvas.height);
+    console.log('room-canvas size:', canvas.width, canvas.height, 'client:', canvas.clientWidth, canvas.clientHeight);
     console.log('RoomViewer3D WebGL context:', this.renderer.getContext());
 
     this.scene  = new THREE.Scene();
@@ -787,8 +791,8 @@ let dropAnim = null;
 const csvRows = [];
 let lastCsvT  = -1;
 
-const canvas3DBeaker = document.getElementById('canvas3DBeaker');
-const canvas3DRoom   = document.getElementById('canvas3DRoom');
+const canvas3DBeaker = document.getElementById('beaker-canvas');
+const canvas3DRoom   = document.getElementById('room-canvas');
 const entropyCanvas  = document.getElementById('entropyCanvas');
 
 let viewer3d = null;

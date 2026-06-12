@@ -43,7 +43,9 @@ export class BeakerViewer3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0x000000, 1);
-    this.renderer.setSize(W, H, false);   // false = don't override CSS
+    this.renderer.domElement.style.width  = '100%';
+    this.renderer.domElement.style.height = '100%';
+    this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
     this.scene  = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(44, W / H, 0.1, 100);

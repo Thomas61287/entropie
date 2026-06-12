@@ -55,16 +55,16 @@ body {
   overflow: hidden;
 }
 
-#canvas3DBeaker,
-#canvas3DRoom {
+#beaker-canvas,
+#room-canvas {
   display: block;
-  width: 50vw !important;
-  height: 85vh !important;
+  width: 50vw;
+  height: 85vh;
   cursor: grab;
   image-rendering: auto;
 }
-#canvas3DBeaker:active,
-#canvas3DRoom:active { cursor: grabbing; }
+#beaker-canvas:active,
+#room-canvas:active { cursor: grabbing; }
 
 /* ── Control bar ── */
 .control-bar {

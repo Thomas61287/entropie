@@ -38,8 +38,8 @@ const csvRows = [];
 let lastCsvT  = -1;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const canvas3DBeaker = document.getElementById('canvas3DBeaker');
-const canvas3DRoom   = document.getElementById('canvas3DRoom');
+const canvas3DBeaker = document.getElementById('beaker-canvas');
+const canvas3DRoom   = document.getElementById('room-canvas');
 const entropyCanvas  = document.getElementById('entropyCanvas');
 
 // ── 3D viewers — loaded via DYNAMIC import so a CDN failure can't kill controls
