@@ -100,6 +100,38 @@
   </div>
 
   <div class="ov-block">
+    <div class="ov-section-title">Experiment</div>
+    <div class="ov-row">
+      <label>Druppelgrootte</label>
+      <input type="range" id="dropRadius" min="2" max="8" step="1" value="4">
+      <span class="ctrl-val" id="dropRadiusVal">4</span>
+    </div>
+    <div class="ov-row">
+      <label>Zinksnelheid</label>
+      <input type="range" id="gravScale" min="0.1" max="3.0" step="0.1" value="1.0">
+      <span class="ctrl-val" id="gravScaleVal">1.0</span>
+    </div>
+    <div class="ov-row">
+      <label>Convectie-sterkte</label>
+      <input type="range" id="buoyScale" min="0.1" max="3.0" step="0.1" value="1.0">
+      <span class="ctrl-val" id="buoyScaleVal">1.0</span>
+    </div>
+    <div class="ov-row">
+      <label>Glas-transparantie</label>
+      <input type="range" id="glassOpacity" min="0.05" max="0.45" step="0.01" value="0.22">
+      <span class="ctrl-val" id="glassOpacityVal">0.22</span>
+    </div>
+    <div class="ov-row">
+      <label>Water troebelheid</label>
+      <input type="range" id="waterTurbidity" min="0.0" max="1.0" step="0.05" value="0.0">
+      <span class="ctrl-val" id="waterTurbidityVal">0.00</span>
+    </div>
+    <div class="ov-btns">
+      <button id="btnCameraToggle" class="ctrl-btn full">Camera: Auto ↻</button>
+    </div>
+  </div>
+
+  <div class="ov-block">
     <div class="ov-section-title">Acties</div>
     <div class="ov-btns">
       <button id="btnReverse"   class="ctrl-btn danger full">⏪ Tijdomkering</button>
