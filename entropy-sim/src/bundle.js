@@ -588,6 +588,17 @@ vec2 boxHit(vec3 o, vec3 d) {
   return vec2(max(mn.x,max(mn.y,mn.z)), min(mx.x,min(mx.y,mx.z)));
 }
 
+// Thermal camera palette: black → purple → red → orange → yellow → white
+vec3 thermalPalette(float t) {
+  vec3 c0=vec3(0.0,0.0,0.0), c1=vec3(0.3,0.0,0.5), c2=vec3(0.8,0.0,0.0);
+  vec3 c3=vec3(1.0,0.5,0.0), c4=vec3(1.0,1.0,0.0), c5=vec3(1.0,1.0,1.0);
+  if (t < 0.2) return mix(c0, c1, t/0.2);
+  if (t < 0.4) return mix(c1, c2, (t-0.2)/0.2);
+  if (t < 0.6) return mix(c2, c3, (t-0.4)/0.2);
+  if (t < 0.8) return mix(c3, c4, (t-0.6)/0.2);
+  return mix(c4, c5, (t-0.8)/0.2);
+}
+
 void main() {
   vec3 dir = normalize(vD);
   vec2 h = boxHit(vO, dir);
@@ -599,17 +610,18 @@ void main() {
   vec4 acc = vec4(0.0);
   for (int i = 0; i < S; i++) {
     vec3 uv = p + 0.5;
-    if (p.x*p.x + p.z*p.z < 0.245 && uv.y > 0.004 && uv.y < 0.996) {
+    // Cylinder clip: r < 0.51 to catch ink right at the beaker wall
+    if (p.x*p.x + p.z*p.z < 0.260 && uv.y > 0.002 && uv.y < 0.998) {
       float dn = texture(u_dens, uv).r;
       if (dn > 0.003) {
         float te = texture(u_temp, uv).r;
         vec3 cc = te < 0.5
           ? mix(u_inkCol, vec3(0.88, 0.26, 0.0), te * 2.0)
           : mix(vec3(0.88, 0.26, 0.0), vec3(1.0, 0.82, 0.06), (te-0.5)*2.0);
-        // Heat-only override: blue→yellow thermal palette
-        vec3 hcol = mix(vec3(0.0, 0.06, 0.55), vec3(1.0, 0.88, 0.08), te);
-        cc = mix(cc, hcol, u_heat);
-        float al = dn * 0.095 * (1.0 + te * 2.4);
+        // Heat mode: full thermal camera palette, shown even without ink
+        float heatDn = max(dn, u_heat * te * 0.6);
+        cc = mix(cc, thermalPalette(te), u_heat);
+        float al = heatDn * 0.28 * (1.0 + te * 2.0);
         acc.rgb += cc * al * (1.0 - acc.a);
         acc.a   += al * (1.0 - acc.a);
         if (acc.a > 0.96) break;
@@ -678,24 +690,26 @@ class BeakerViewer3D {
     const GN = 32;
     this._vol = new InkVolume3D(GN);
 
-    // DataTexture3D for density and temperature
+    // DataTexture3D for density and temperature — use RGBA for broadest r128 support
     const Tex3D = THREE.DataTexture3D || THREE.Data3DTexture;
-    const empty = new Uint8Array(GN * GN * GN);
-    this._densTex = new Tex3D(empty.slice(), GN, GN, GN);
-    this._densTex.format    = THREE.RedFormat;
+    const emptyRGBA = new Uint8Array(GN * GN * GN * 4);
+    this._densTex = new Tex3D(emptyRGBA.slice(), GN, GN, GN);
+    this._densTex.format    = THREE.RGBAFormat;
     this._densTex.type      = THREE.UnsignedByteType;
     this._densTex.minFilter = THREE.LinearFilter;
     this._densTex.magFilter = THREE.LinearFilter;
-    this._densTex.unpackAlignment = 1;
     this._densTex.needsUpdate = true;
 
-    this._tempTex = new Tex3D(empty.slice(), GN, GN, GN);
-    this._tempTex.format    = THREE.RedFormat;
+    this._tempTex = new Tex3D(emptyRGBA.slice(), GN, GN, GN);
+    this._tempTex.format    = THREE.RGBAFormat;
     this._tempTex.type      = THREE.UnsignedByteType;
     this._tempTex.minFilter = THREE.LinearFilter;
     this._tempTex.magFilter = THREE.LinearFilter;
-    this._tempTex.unpackAlignment = 1;
     this._tempTex.needsUpdate = true;
+
+    // Pre-allocate RGBA byte buffers — reused every frame to avoid GC pressure
+    this._densBytes = new Uint8Array(GN * GN * GN * 4);
+    this._tempBytes = new Uint8Array(GN * GN * GN * 4);
 
     this._build();
     window.addEventListener('resize', () => {
@@ -743,14 +757,14 @@ class BeakerViewer3D {
       new THREE.CylinderGeometry(_BR * 1.05, _BR, _BH, 48, 1, true), this.glassMat));
     const bot = new THREE.Mesh(new THREE.CircleGeometry(_BR * 1.00, 48), this.glassMat);
     bot.rotation.x = -Math.PI / 2; bot.position.y = -_BH / 2; this.scene.add(bot);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(_BR * 1.04, 0.04, 8, 48),
-      new THREE.MeshPhysicalMaterial({ color: 0xcceeff, roughness: 0.02, metalness: 0.1, clearcoat: 1.0 }));
-    rim.position.y = _BH / 2; this.scene.add(rim);
-
-    // EdgesGeometry highlight
-    this.scene.add(new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.CylinderGeometry(_BR * 1.05, _BR, _BH, 16, 1, true)),
-      new THREE.LineBasicMaterial({ color: 0xaaffee, transparent: true, opacity: 0.30 })));
+    // Beaker lip — simple line loop, NOT a torus (torus with clearcoat was the rogue ring)
+    const lipPts = [];
+    for (let a = 0; a <= 48; a++) {
+      const ang = a / 48 * Math.PI * 2;
+      lipPts.push(new THREE.Vector3(Math.cos(ang) * _BR * 1.04, _BH / 2, Math.sin(ang) * _BR * 1.04));
+    }
+    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(lipPts),
+      new THREE.LineBasicMaterial({ color: 0xaaccdd, transparent: true, opacity: 0.50 })));
 
     // Graduated tick rings
     for (let k = 1; k <= 5; k++) {
@@ -792,7 +806,7 @@ class BeakerViewer3D {
       },
       vertexShader:   _VERT,
       fragmentShader: _FRAG,
-      transparent: true, depthWrite: false, side: THREE.BackSide,
+      transparent: true, depthWrite: false, side: THREE.FrontSide,
     });
     this._volMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this._volMat);
     this._volMesh.scale.set(_BR * 2, waterH, _BR * 2);
@@ -812,19 +826,22 @@ class BeakerViewer3D {
   _uploadVolume() {
     const { N, ink, temp, ambTemp } = this._vol;
     const sz = N * N * N;
-    const dB = new Uint8Array(sz);
-    const tB = new Uint8Array(sz);
+    const dB = this._densBytes;
+    const tB = this._tempBytes;
     const invRange = 1.0 / Math.max(0.001, 1 - ambTemp);
     for (let i = 0; i < sz; i++) {
-      dB[i] = Math.round(Math.min(255, ink[i]  * 255));
-      tB[i] = Math.round(Math.min(255, Math.max(0, (temp[i] - ambTemp) * invRange) * 255));
+      const d = Math.round(Math.min(255, ink[i] * 255));
+      const t = Math.round(Math.min(255, Math.max(0, (temp[i] - ambTemp) * invRange) * 255));
+      // Only R channel is sampled in shader; other channels left 0
+      dB[i * 4]     = d;
+      tB[i * 4]     = t;
     }
     this._densTex.image.data = dB;
     this._tempTex.image.data = tB;
     this._densTex.needsUpdate = true;
     this._tempTex.needsUpdate = true;
 
-    // Update camera in volume local space (avoids matrix inverse in shader)
+    // Camera in volume local space — updated every frame for correct raymarching
     const localCam = this._volMesh.worldToLocal(this.camera.position.clone());
     this._volMat.uniforms.u_cam.value.copy(localCam);
   }
