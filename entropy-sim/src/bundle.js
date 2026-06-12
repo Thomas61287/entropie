@@ -1,7 +1,6 @@
 // ============================================================
 //  ENTROPY IN MOTION — single bundle, no ES modules
 //  Expects globals: THREE, THREE.OrbitControls
-//  (loaded via <script> tags before this file)
 // ============================================================
 
 window.addEventListener('error', e => {
@@ -387,9 +386,9 @@ class Simulation {
 
 // ─── viewer3d.js (BeakerViewer3D) ────────────────────────────────────────────
 
-const _PC    = 3000;
-const _BR    = 1.20;
-const _BH    = 3.20;
+const _PC     = 3500;
+const _BR     = 1.20;
+const _BH     = 3.20;
 const _Y_SURF = _BH * (0.5 - WATER_SURFACE_FRAC);
 const _Y_BOT  = -_BH * 0.45;
 const _J_WATER = Math.floor(WATER_SURFACE_FRAC * N);
@@ -400,10 +399,36 @@ function _w2g(wx, wy) {
   return [Math.max(1, Math.min(N, i)), Math.max(1, Math.min(N, j))];
 }
 
-function _tempColor(T) {
-  if (T < 0.25) { const s = T / 0.25; return [1, 1, 1-s]; }
-  if (T < 0.65) { const s = (T-0.25)/0.40; return [1, 1-s*0.60, 0]; }
-  const s = (T-0.65)/0.35; return [1, 0.40-s*0.40, 0];
+// Round soft-glow sprite for particles
+function _makeParticleTex() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+  g.addColorStop(0,    'rgba(255,255,255,1.0)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.90)');
+  g.addColorStop(0.55, 'rgba(255,255,255,0.40)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0.0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// Water molecules = soft blue. Ink = deep blue/indigo. Heat = orange.
+function _particleColor(c, T) {
+  const ci = Math.min(1, c * 4);
+  const ti = Math.min(1, T * 1.8);
+
+  let r = 0.18 + ti * 0.82;
+  let g = 0.28 - ci * 0.18 + ti * 0.22;
+  let b = 0.78 - ci * 0.38 - ti * 0.70;
+
+  const bright = 0.55 + ci * 0.50 + ti * 0.40;
+  return [
+    Math.min(1, Math.max(0, r * bright)),
+    Math.min(1, Math.max(0, g * bright)),
+    Math.min(1, Math.max(0, b * bright)),
+  ];
 }
 
 class BeakerViewer3D {
@@ -411,7 +436,6 @@ class BeakerViewer3D {
     const W = Math.round(window.innerWidth  * 0.5);
     const H = Math.round(window.innerHeight * 0.85);
 
-    // Set HTML attributes before creating renderer
     canvas.width  = W;
     canvas.height = H;
 
@@ -421,10 +445,6 @@ class BeakerViewer3D {
     this.renderer.domElement.style.width  = '100%';
     this.renderer.domElement.style.height = '100%';
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-
-    // Debug
-    console.log('beaker-canvas size:', canvas.width, canvas.height, 'client:', canvas.clientWidth, canvas.clientHeight);
-    console.log('BeakerViewer3D WebGL context:', this.renderer.getContext());
 
     this.scene  = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(44, W / H, 0.1, 100);
@@ -444,6 +464,13 @@ class BeakerViewer3D {
     this._ripples   = [];
     this._dropState = null;
 
+    // Ink concentration canvas texture (shows diffusion inside water)
+    this._inkCanvas        = document.createElement('canvas');
+    this._inkCanvas.width  = 128;
+    this._inkCanvas.height = 128;
+    this._inkCtx           = this._inkCanvas.getContext('2d');
+    this._inkTex           = new THREE.CanvasTexture(this._inkCanvas);
+
     this._build();
     window.addEventListener('resize', () => {
       const W2 = Math.round(window.innerWidth  * 0.5);
@@ -457,8 +484,9 @@ class BeakerViewer3D {
   }
 
   _build() {
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.40));
-    const key = new THREE.PointLight(0xfff0e0, 2.4, 22); key.position.set(3, 3, 3);
+    // Lights
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    const key = new THREE.PointLight(0xfff0e0, 2.2, 22); key.position.set(3, 3, 3);
     this.scene.add(key);
     const back = new THREE.PointLight(0x6688aa, 0.7, 14); back.position.set(-2, -1, -2);
     this.scene.add(back);
@@ -466,58 +494,128 @@ class BeakerViewer3D {
     this._inkLight.position.set(0, _Y_SURF - 0.3, 0);
     this.scene.add(this._inkLight);
 
+    // Beaker glass — slightly more opaque for realism
     const glassMat = new THREE.MeshStandardMaterial({
-      color: 0xaaddff, transparent: true, opacity: 0.12,
-      roughness: 0, metalness: 0, side: THREE.DoubleSide, depthWrite: false });
+      color: 0xaaddff, transparent: true, opacity: 0.15,
+      roughness: 0, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false });
     this.scene.add(new THREE.Mesh(new THREE.CylinderGeometry(_BR*1.05, _BR, _BH, 48, 1, true), glassMat));
     const bot = new THREE.Mesh(new THREE.CircleGeometry(_BR, 48), glassMat);
     bot.rotation.x = -Math.PI/2; bot.position.y = -_BH/2;
     this.scene.add(bot);
 
+    // Cyan wireframe outline
     this.scene.add(new THREE.Mesh(
       new THREE.CylinderGeometry(_BR*1.05, _BR, _BH, 12, 3, true),
-      new THREE.MeshBasicMaterial({ color: 0x00ffcc, wireframe: true, transparent: true, opacity: 0.80 })));
+      new THREE.MeshBasicMaterial({ color: 0x00ffcc, wireframe: true, transparent: true, opacity: 0.70 })));
 
+    // Tick rings
     for (let k = 1; k <= 4; k++) {
       const ty = _Y_BOT + (k / 4.8) * (_Y_SURF - _Y_BOT);
       const pts = [];
       for (let a = 0; a <= 64; a++) { const ang = a/64*Math.PI*2; pts.push(new THREE.Vector3(Math.cos(ang)*_BR*1.06, ty, Math.sin(ang)*_BR*1.06)); }
       this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.65 })));
+        new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.55 })));
       this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(_BR*1.06, ty, 0), new THREE.Vector3(_BR*1.22, ty, 0)]),
-        new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.75 })));
+        new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.65 })));
     }
 
+    // Water body — more transparent so ink inside is visible
     const waterH = _BH * (1 - WATER_SURFACE_FRAC) - 0.06;
-    this.waterMat = new THREE.MeshStandardMaterial({ color: 0x001a4d, transparent: true, opacity: 0.88, roughness: 0.3, metalness: 0 });
+    this.waterMat = new THREE.MeshStandardMaterial({
+      color: 0x002266, transparent: true, opacity: 0.40, roughness: 0.3, metalness: 0 });
     const wb = new THREE.Mesh(new THREE.CylinderGeometry(_BR*0.96, _BR*0.94, waterH, 48), this.waterMat);
     wb.position.y = _Y_SURF - waterH/2;
     this.scene.add(wb);
 
+    // ── Ink visualization: 3 cross-section planes inside the water ───────────
+    // Shows the actual diffusion field as swirling blue/indigo wisps
+    const inkMat = new THREE.MeshBasicMaterial({
+      map: this._inkTex, transparent: true, opacity: 1.0,
+      depthWrite: false, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    this._inkPlanes = [];
+    for (let k = 0; k < 3; k++) {
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(_BR * 1.88, waterH), inkMat);
+      plane.rotation.y = k * Math.PI / 3;
+      plane.position.y = _Y_SURF - waterH / 2;
+      this.scene.add(plane);
+      this._inkPlanes.push(plane);
+    }
+
+    // Water surface (animated)
     this.surfGeo = new THREE.PlaneGeometry(_BR*2*0.95, _BR*2*0.95, 24, 24);
-    this.surfMat = new THREE.MeshStandardMaterial({ color: 0x0033aa, transparent: true, opacity: 0.55, roughness: 0.15, metalness: 0.10 });
+    this.surfMat = new THREE.MeshStandardMaterial({
+      color: 0x0044cc, transparent: true, opacity: 0.60, roughness: 0.10, metalness: 0.15 });
     this.surfMesh = new THREE.Mesh(this.surfGeo, this.surfMat);
     this.surfMesh.rotation.x = -Math.PI/2; this.surfMesh.position.y = _Y_SURF;
     this.scene.add(this.surfMesh);
 
+    // ── Particles: round soft sprites ────────────────────────────────────────
+    const pTex = _makeParticleTex();
     const pos = new Float32Array(_PC*3), col = new Float32Array(_PC*3);
     for (let p = 0; p < _PC; p++) {
       const ang = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*_BR*0.87;
-      pos[p*3] = Math.cos(ang)*r; pos[p*3+1] = _Y_BOT + Math.random()*(_Y_SURF-_Y_BOT); pos[p*3+2] = Math.sin(ang)*r;
-      col[p*3] = 0.65; col[p*3+1] = 0.65; col[p*3+2] = 0.65;
+      pos[p*3]   = Math.cos(ang)*r;
+      pos[p*3+1] = _Y_BOT + Math.random()*(_Y_SURF-_Y_BOT);
+      pos[p*3+2] = Math.sin(ang)*r;
+      // Initial: soft blue (water color)
+      col[p*3] = 0.10; col[p*3+1] = 0.18; col[p*3+2] = 0.42;
     }
     this.pPos = pos; this.pVel = new Float32Array(_PC*3);
     this.pGeo = new THREE.BufferGeometry();
     this.pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.pGeo.setAttribute('color',    new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-    this.pMat = new THREE.PointsMaterial({ size: 0.07, vertexColors: true, transparent: true, opacity: 1.0, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+    this.pMat = new THREE.PointsMaterial({
+      size: 0.11, map: pTex,
+      vertexColors: true, transparent: true, opacity: 0.92,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      alphaTest: 0.01,
+    });
     this.scene.add(new THREE.Points(this.pGeo, this.pMat));
 
+    // Drop sphere
     this.dropMesh = new THREE.Mesh(new THREE.SphereGeometry(0.10, 16, 10),
       new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff1100, emissiveIntensity: 1.5 }));
     this.dropMesh.visible = false;
     this.scene.add(this.dropMesh);
+  }
+
+  // Maps sim ink+heat grid onto 128×128 canvas showing actual diffusion pattern
+  _updateInkTexture(sim) {
+    const W = 128, H = 128;
+    const img = this._inkCtx.createImageData(W, H);
+    const d   = img.data;
+    const jRange = N - _J_WATER;
+
+    for (let ty = 0; ty < H; ty++) {
+      // ty=0 = water surface (_J_WATER), ty=H-1 = bottom (N)
+      const sj = _J_WATER + Math.round(ty / (H - 1) * (jRange - 1));
+      for (let tx = 0; tx < W; tx++) {
+        const si  = 1 + Math.round(tx / (W - 1) * (N - 1));
+        const gid = idx(Math.min(N, Math.max(1, si)), Math.min(N, Math.max(1, sj)));
+        const c   = sim.ink.C[gid]  || 0;
+        const T   = sim.heat.T[gid] || 0;
+        const pi  = (ty * W + tx) * 4;
+
+        if (c < 0.003) { d[pi + 3] = 0; continue; }
+
+        const ci = Math.min(1, c * 3.5);
+        const ti = Math.min(1, T * 2.5);
+
+        // Deep blue for ink, shifts orange-red for heat
+        const r = Math.round(Math.min(255, 8  + ti * 230));
+        const g = Math.round(Math.min(255, 12 + ci * 20 + ti * 80));
+        const b = Math.round(Math.max(0,   210 - ci * 110 - ti * 190));
+        const a = Math.round(Math.min(255, 40  + ci * 210));
+
+        d[pi] = r; d[pi+1] = g; d[pi+2] = b; d[pi+3] = a;
+      }
+    }
+
+    this._inkCtx.putImageData(img, 0, 0);
+    this._inkTex.needsUpdate = true;
   }
 
   startDrop(nx = 0.5) {
@@ -535,7 +633,7 @@ class BeakerViewer3D {
   _spawnRipples() {
     for (let i = 0; i < 3; i++) {
       const m = new THREE.Mesh(new THREE.RingGeometry(0.01, 0.04, 36),
-        new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.80, side: THREE.DoubleSide, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ color: 0x0066ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
       m.rotation.x = -Math.PI/2; m.position.y = _Y_SURF + 0.012;
       if (this._dropState) m.position.x = (this._dropState.nx - 0.5) * 2 * _BR * 0.80;
       this.scene.add(m);
@@ -545,6 +643,11 @@ class BeakerViewer3D {
 
   update(sim) {
     this._waveT += 0.018;
+
+    // Ink texture — shows actual diffusion field every frame
+    this._updateInkTexture(sim);
+
+    // Animated water surface
     const pa = this.surfGeo.attributes.position.array;
     for (let v = 0, vc = this.surfGeo.attributes.position.count; v < vc; v++) {
       const vx = pa[v*3], vz = pa[v*3+2];
@@ -552,42 +655,48 @@ class BeakerViewer3D {
     }
     this.surfGeo.attributes.position.needsUpdate = true;
 
-    const stats = sim.getStats(0);
+    // Water shifts bluer/darker as ink fills
+    const stats   = sim.getStats(0);
     const inkFrac = Math.min(1, stats.inkCoverage / 25);
-    this.waterMat.color.setRGB(0, 0.10 + inkFrac*0.04, 0.30 - inkFrac*0.12);
-    this._inkLight.intensity = inkFrac * 1.6;
+    this.waterMat.color.setRGB(0, 0.08 + inkFrac*0.04, 0.26 - inkFrac*0.10);
+    this._inkLight.intensity = inkFrac * 2.0;
 
+    // Drop fall
     if (this._dropState && !this._dropState.landed) {
       this._dropState.progress = Math.min(1, this._dropState.progress + 0.028);
       this.dropMesh.position.set((this._dropState.nx-0.5)*2*_BR*0.80, _Y_SURF + (1-this._dropState.progress)*_BH*0.45, 0);
     }
 
+    // Ripple expand + fade
     this._ripples = this._ripples.filter(r => {
       if (r.delay-- > 0) return true;
       r.scale += 0.045; r.mesh.scale.setScalar(r.scale);
-      r.mesh.material.opacity = Math.max(0, 0.80 - r.scale*0.46);
+      r.mesh.material.opacity = Math.max(0, 0.85 - r.scale*0.50);
       if (r.mesh.material.opacity <= 0) { this.scene.remove(r.mesh); return false; }
       return true;
     });
 
+    // Particle physics + color
     const vxA = sim.fluid.vx, vyA = sim.fluid.vy, inkA = sim.ink.C, tmpA = sim.heat.T;
     const P = this.pPos, V = this.pVel, col = this.pGeo.attributes.color.array;
     for (let p = 0; p < _PC; p++) {
       const [si, sj] = _w2g(P[p*3], P[p*3+1]);
       const gid = idx(si, sj);
       const c = inkA[gid] || 0, T = tmpA[gid] || 0;
-      const br = 0.003 + T * 0.004;
+      const br = 0.002 + T * 0.005 + c * 0.003;
+
       V[p*3]   = V[p*3]  *0.88 + (vxA[gid]||0)*0.18 + (Math.random()-0.5)*br;
       V[p*3+1] = V[p*3+1]*0.88 - (vyA[gid]||0)*0.18 + (Math.random()-0.5)*br;
       V[p*3+2] = V[p*3+2]*0.88                       + (Math.random()-0.5)*br;
       P[p*3]   += V[p*3]; P[p*3+1] += V[p*3+1]; P[p*3+2] += V[p*3+2];
+
       const r2d = Math.hypot(P[p*3], P[p*3+2]);
       if (r2d > _BR*0.90) { const s = _BR*0.90/r2d; P[p*3] *= s; P[p*3+2] *= s; V[p*3] *= -0.2; V[p*3+2] *= -0.2; }
       if (P[p*3+1] > _Y_SURF)        { P[p*3+1] = _Y_SURF;        V[p*3+1] = Math.abs(V[p*3+1])*0.15; }
       if (P[p*3+1] < _Y_BOT + 0.02)  { P[p*3+1] = _Y_BOT + 0.02;  V[p*3+1] = Math.abs(V[p*3+1])*0.15; }
-      const [r, g, b] = _tempColor(T);
-      const bright = 0.25 + T*0.55 + c*0.20;
-      col[p*3] = Math.min(1, r*bright); col[p*3+1] = Math.min(1, g*bright); col[p*3+2] = Math.min(1, b*bright);
+
+      const [pr, pg, pb] = _particleColor(c, T);
+      col[p*3] = pr; col[p*3+1] = pg; col[p*3+2] = pb;
     }
     this.pGeo.attributes.position.needsUpdate = true;
     this.pGeo.attributes.color.needsUpdate    = true;
@@ -616,43 +725,40 @@ class RoomViewer3D {
     const W = Math.round(window.innerWidth  * 0.5);
     const H = Math.round(window.innerHeight * 0.85);
 
-    // Set HTML attributes before creating renderer
     canvas.width  = W;
     canvas.height = H;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setClearColor(0x000000, 1);
+    this.renderer.setClearColor(0x05050f, 1);
     this.renderer.domElement.style.width  = '100%';
     this.renderer.domElement.style.height = '100%';
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 
-    // Debug
-    console.log('room-canvas size:', canvas.width, canvas.height, 'client:', canvas.clientWidth, canvas.clientHeight);
-    console.log('RoomViewer3D WebGL context:', this.renderer.getContext());
-
     this.scene  = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 80);
-    this.camera.position.set(0, 3.2, 7.0);
+    this.scene.fog = new THREE.Fog(0x05050f, 8, 22);
+
+    this.camera = new THREE.PerspectiveCamera(52, W / H, 0.1, 80);
+    this.camera.position.set(0, 2.2, 6.5);
     this.camera.lookAt(0, 1.0, 0);
 
     this.controls = new THREE.OrbitControls(this.camera, canvas);
     this.controls.autoRotate      = true;
-    this.controls.autoRotateSpeed = 0.28;
+    this.controls.autoRotateSpeed = 0.25;
     this.controls.enableDamping   = true;
     this.controls.dampingFactor   = 0.06;
     this.controls.target.set(0, 1.0, 0);
-    this.controls.minDistance     = 3;
-    this.controls.maxDistance     = 14;
-    this.controls.maxPolarAngle   = Math.PI * 0.58;
+    this.controls.minDistance     = 2.5;
+    this.controls.maxDistance     = 12;
+    this.controls.maxPolarAngle   = Math.PI * 0.56;
     this.controls.enablePan       = false;
 
     this._fogCanvas        = document.createElement('canvas');
     this._fogCanvas.width  = 80;
     this._fogCanvas.height = 80;
-    this._fogCtx = this._fogCanvas.getContext('2d');
-    this._fogTex = new THREE.CanvasTexture(this._fogCanvas);
-    this._pulseT = 0;
+    this._fogCtx  = this._fogCanvas.getContext('2d');
+    this._fogTex  = new THREE.CanvasTexture(this._fogCanvas);
+    this._pulseT  = 0;
 
     this._buildLights();
     this._buildRoom();
@@ -671,21 +777,61 @@ class RoomViewer3D {
   }
 
   _buildLights() {
-    this.scene.add(new THREE.AmbientLight(0x111111, 1.0));
-    this._srcLight = new THREE.PointLight(0xff6600, 1.2, 6.0);
+    // Cool dim ambient — only just enough to see the room shape
+    this.scene.add(new THREE.AmbientLight(0x0d1020, 1.0));
+
+    // Ceiling lamp — warm white overhead light
+    this._ceilLight = new THREE.PointLight(0xfff5e0, 1.2, 14);
+    this._ceilLight.position.set(0, _ROOM_H - 0.15, 0);
+    this.scene.add(this._ceilLight);
+
+    // Warm orange source above beaker — driven by concentration
+    this._srcLight = new THREE.PointLight(0xff6600, 1.5, 7.0);
     this._srcLight.position.set(0, 0.9, 0);
     this.scene.add(this._srcLight);
-    const fill = new THREE.PointLight(0x334466, 0.5, 16);
+
+    // Cool corner fill for depth
+    const fill = new THREE.PointLight(0x223355, 0.6, 18);
     fill.position.set(-3.5, 3.0, -3.5);
     this.scene.add(fill);
   }
 
   _buildRoom() {
-    const wm = () => new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.38 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(_ROOM_W, _ROOM_D, 16, 16), wm());
-    floor.rotation.x = -Math.PI/2; this.scene.add(floor);
-    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(_ROOM_W, _ROOM_D, 6, 6), wm());
-    ceil.rotation.x = Math.PI/2; ceil.position.y = _ROOM_H; this.scene.add(ceil);
+    // ── Solid floor ───────────────────────────────────────────────────────────
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x111118, roughness: 0.92, metalness: 0.08 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(_ROOM_W, _ROOM_D), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    this.scene.add(floor);
+
+    // Floor grid overlay
+    const grid = new THREE.GridHelper(_ROOM_W, 16, 0x1e1e2e, 0x181825);
+    this.scene.add(grid);
+
+    // ── Solid ceiling ─────────────────────────────────────────────────────────
+    const ceilMat = new THREE.MeshStandardMaterial({ color: 0x0e0e18, roughness: 1.0 });
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(_ROOM_W, _ROOM_D), ceilMat);
+    ceil.rotation.x = Math.PI / 2; ceil.position.y = _ROOM_H;
+    this.scene.add(ceil);
+
+    // Ceiling lamp fixture
+    const lampMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.45, 0.07, 0.45),
+      new THREE.MeshBasicMaterial({ color: 0xfff8e0 }));
+    lampMesh.position.set(0, _ROOM_H - 0.04, 0);
+    this.scene.add(lampMesh);
+
+    // ── Room walls — solid dark box (BackSide) ────────────────────────────────
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0a14, roughness: 1.0, metalness: 0, side: THREE.BackSide });
+    const roomBox = new THREE.Mesh(
+      new THREE.BoxGeometry(_ROOM_W, _ROOM_H, _ROOM_D), wallMat);
+    roomBox.position.y = _ROOM_H / 2;
+    this.scene.add(roomBox);
+
+    // ── Wireframe overlay on walls (subtle blue-grey) ─────────────────────────
+    const wm = () => new THREE.MeshBasicMaterial({
+      color: 0x3a3a5c, wireframe: true, transparent: true, opacity: 0.28 });
 
     const wallDefs = [
       [[0, _ROOM_H/2, -_ROOM_D/2], 0,            _ROOM_W],
@@ -695,9 +841,11 @@ class RoomViewer3D {
     ];
     this._wallGlowMats = [];
     for (const [[px, py, pz], ry, dim] of wallDefs) {
-      const wf = new THREE.Mesh(new THREE.PlaneGeometry(dim, _ROOM_H, 10, 5), wm());
+      const wf = new THREE.Mesh(new THREE.PlaneGeometry(dim, _ROOM_H, 8, 4), wm());
       wf.position.set(px, py, pz); wf.rotation.y = ry; this.scene.add(wf);
-      const gm = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0, depthWrite: false, side: THREE.FrontSide });
+
+      const gm = new THREE.MeshBasicMaterial({
+        color: 0xff4400, transparent: true, opacity: 0, depthWrite: false, side: THREE.FrontSide });
       const gw = new THREE.Mesh(new THREE.PlaneGeometry(dim, _ROOM_H), gm);
       const off = 0.03;
       gw.position.set(
@@ -707,11 +855,25 @@ class RoomViewer3D {
       gw.rotation.y = ry; this.scene.add(gw);
       this._wallGlowMats.push(gm);
     }
+
+    // ── Baseboard trim ────────────────────────────────────────────────────────
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x1a1a28, roughness: 0.8 });
+    const trimH = 0.08;
+    const trimDefs = [
+      [0, -_ROOM_D/2, 0,      _ROOM_W, trimH, 0.06],
+      [0,  _ROOM_D/2, 0,      _ROOM_W, trimH, 0.06],
+      [-_ROOM_W/2, 0, 0,      0.06, trimH, _ROOM_D],
+      [ _ROOM_W/2, 0, 0,      0.06, trimH, _ROOM_D],
+    ];
+    for (const [tx, tz, ty, sw, sh, sd] of trimDefs) {
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, sd), trimMat);
+      trim.position.set(tx, trimH / 2, tz); this.scene.add(trim);
+    }
   }
 
   _buildFogPlanes() {
     const heights   = [0.08, 0.30, 0.56, 0.86, 1.18, 1.55, 2.00, 2.55];
-    const opacities = [0.85, 0.75, 0.62, 0.50, 0.36, 0.22, 0.12, 0.06];
+    const opacities = [0.88, 0.78, 0.65, 0.52, 0.38, 0.24, 0.13, 0.06];
     this._fogMats = [];
     for (let k = 0; k < heights.length; k++) {
       const mat = new THREE.MeshBasicMaterial({
@@ -724,11 +886,29 @@ class RoomViewer3D {
   }
 
   _buildBeaker() {
+    // Wooden table
+    const tableMat = new THREE.MeshStandardMaterial({ color: 0x4a3520, roughness: 0.75, metalness: 0 });
+    const tableTop = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.05, 0.85), tableMat);
+    tableTop.position.set(0, 0.50, 0);
+    this.scene.add(tableTop);
+
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x352516, roughness: 0.85 });
+    for (const [lx, lz] of [[-0.36, -0.36], [0.36, -0.36], [-0.36, 0.36], [0.36, 0.36]]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.50, 0.045), legMat);
+      leg.position.set(lx, 0.25, lz); this.scene.add(leg);
+    }
+
+    // Beaker sits on table
     this._beakerMesh = new THREE.Mesh(
       new THREE.CylinderGeometry(0.20, 0.16, 0.48, 24),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.3, metalness: 0 }));
-    this._beakerMesh.position.set(0, 0.24, 0);
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5,
+        roughness: 0.3, metalness: 0.0 }));
+    this._beakerMesh.position.set(0, 0.745, 0);
     this.scene.add(this._beakerMesh);
+
+    // Update source light to beaker height
+    this._srcLight.position.set(0, 0.90, 0);
   }
 
   _updateFogTexture(gasRoom) {
@@ -758,16 +938,24 @@ class RoomViewer3D {
     this._pulseT += 0.04;
     const GN = gasRoom.N, mid = Math.floor(GN / 2);
     const centreC = Math.min(1, Math.sqrt(gasRoom.C[mid + mid*GN] * 600));
-    this._srcLight.intensity = 0.8 + centreC * 4.0;
-    this._srcLight.color.setRGB(1.0, 0.40 - centreC*0.20, 0.0);
-    this._beakerMesh.material.emissiveIntensity = 0.5 + 0.15*Math.sin(this._pulseT) + centreC*1.5;
+
+    this._srcLight.intensity = 1.0 + centreC * 4.5;
+    this._srcLight.color.setRGB(1.0, 0.38 - centreC*0.18, 0.0);
+
+    // Ceiling lamp dims slightly as gas fills room (atmospheric effect)
+    this._ceilLight.intensity = 1.2 - centreC * 0.35;
+
+    this._beakerMesh.material.emissiveIntensity =
+      0.4 + 0.15*Math.sin(this._pulseT) + centreC*1.8;
+
     const wallC = [0,1,2,3].map(w => _wallEdgeAvg(gasRoom.C, GN, w));
     for (let w = 0; w < 4; w++) {
       const amp = Math.min(1, Math.sqrt(wallC[w] * 600));
       const mat = this._wallGlowMats[w];
-      if (amp > 0.02) { mat.color.setRGB(1.0, amp*0.40, 0); mat.opacity = 0.08 + amp*0.50; }
+      if (amp > 0.02) { mat.color.setRGB(1.0, amp*0.40, 0); mat.opacity = 0.06 + amp*0.52; }
       else mat.opacity = 0;
     }
+
     this._updateFogTexture(gasRoom);
   }
 
@@ -798,7 +986,6 @@ const entropyCanvas  = document.getElementById('entropyCanvas');
 let viewer3d = null;
 let room3d   = null;
 
-// Instantiate viewers synchronously — THREE is already loaded as a global
 try {
   if (canvas3DBeaker) viewer3d = new BeakerViewer3D(canvas3DBeaker);
 } catch (e) { console.error('BeakerViewer3D failed:', e); }
