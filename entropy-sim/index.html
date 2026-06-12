@@ -71,8 +71,18 @@
       <span class="sl">Carnot η<sub>max</sub></span> <span class="sv" id="fCarnot">—</span>
       <span class="sl">Osmotische druk Π</span>     <span class="sv" id="fOsmotic">—</span>
       <span class="sl">ΔS thermisch</span>           <span class="sv" id="fCumDS">—</span>
+      <span class="sl">Rayleigh-getal Ra</span>      <span class="sv" id="fRa">—</span>
     </div>
-    <div class="ov-formula">D = k<sub>B</sub>T/6πηr &nbsp;·&nbsp; Π = MRT &nbsp;·&nbsp; η = 1−T<sub>c</sub>/T<sub>h</sub></div>
+    <div class="ov-formula">D = k<sub>B</sub>T/6πηr &nbsp;·&nbsp; Ra &gt; 1708 → convectie</div>
+  </div>
+
+  <div class="ov-block">
+    <div class="ov-section-title">Diffusie Validatie σ²(t)</div>
+    <canvas id="diffCanvas" width="284" height="68" style="display:block;width:100%"></canvas>
+    <div style="display:flex;justify-content:space-between;margin-top:3px">
+      <span style="font:8px monospace;color:#00ffcc">— σ² gemeten</span>
+      <span style="font:8px monospace;color:#ff8800">-- 6Dt theorie</span>
+    </div>
   </div>
 
   <div class="ov-block">
@@ -127,6 +137,7 @@
       <span class="ctrl-val" id="waterTurbidityVal">0.00</span>
     </div>
     <div class="ov-btns">
+      <button id="btnHeatMode"     class="ctrl-btn full">Warmtebeeld: UIT</button>
       <button id="btnCameraToggle" class="ctrl-btn full">Camera: Auto ↻</button>
     </div>
   </div>
