@@ -395,7 +395,7 @@ class InkVolume3D {
     this._tB     = new Float32Array(sz);
     this.elapsed = 0;
     this.hasInk  = false;
-    this.D_vol   = 0.08;
+    this.D_vol   = 0.008;
     this.ambTemp = 0.18;
   }
 
@@ -559,79 +559,38 @@ const _BH     = 3.20;
 const _Y_SURF = _BH * (0.5 - WATER_SURFACE_FRAC);   // ≈  0.704
 const _Y_BOT  = -_BH * 0.45;                          // ≈ -1.440
 
-// GLSL3 shaders for volumetric ink raymarching
-const _VERT = `
-precision highp float;
-uniform vec3 u_cam;
-out vec3 vO;
-out vec3 vD;
-void main() {
-  vO = u_cam;
-  vD = position - u_cam;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
+// ─── Ink & thermal color helpers (JS, for canvas-texture rendering) ──────────
 
-const _FRAG = `
-precision highp float;
-precision highp sampler3D;
-uniform sampler3D u_dens;
-uniform sampler3D u_temp;
-uniform vec3  u_inkCol;
-uniform float u_heat;
-in vec3 vO;
-in vec3 vD;
-out vec4 fragColor;
-
-vec2 boxHit(vec3 o, vec3 d) {
-  vec3 iv = 1.0/d, t0=(-0.5-o)*iv, t1=(0.5-o)*iv;
-  vec3 mn=min(t0,t1), mx=max(t0,t1);
-  return vec2(max(mn.x,max(mn.y,mn.z)), min(mx.x,min(mx.y,mx.z)));
-}
-
-// Thermal camera palette: black → purple → red → orange → yellow → white
-vec3 thermalPalette(float t) {
-  vec3 c0=vec3(0.0,0.0,0.0), c1=vec3(0.3,0.0,0.5), c2=vec3(0.8,0.0,0.0);
-  vec3 c3=vec3(1.0,0.5,0.0), c4=vec3(1.0,1.0,0.0), c5=vec3(1.0,1.0,1.0);
-  if (t < 0.2) return mix(c0, c1, t/0.2);
-  if (t < 0.4) return mix(c1, c2, (t-0.2)/0.2);
-  if (t < 0.6) return mix(c2, c3, (t-0.4)/0.2);
-  if (t < 0.8) return mix(c3, c4, (t-0.6)/0.2);
-  return mix(c4, c5, (t-0.8)/0.2);
-}
-
-void main() {
-  vec3 dir = normalize(vD);
-  vec2 h = boxHit(vO, dir);
-  if (h.x >= h.y) discard;
-  float tN = max(h.x, 0.0);
-  const int S = 60;
-  float dt = (h.y - tN) / float(S);
-  vec3 p = vO + tN * dir, ds = dir * dt;
-  vec4 acc = vec4(0.0);
-  for (int i = 0; i < S; i++) {
-    vec3 uv = p + 0.5;
-    // Cylinder clip: r < 0.51 to catch ink right at the beaker wall
-    if (p.x*p.x + p.z*p.z < 0.260 && uv.y > 0.002 && uv.y < 0.998) {
-      float dn = texture(u_dens, uv).r;
-      if (dn > 0.003) {
-        float te = texture(u_temp, uv).r;
-        vec3 cc = te < 0.5
-          ? mix(u_inkCol, vec3(0.88, 0.26, 0.0), te * 2.0)
-          : mix(vec3(0.88, 0.26, 0.0), vec3(1.0, 0.82, 0.06), (te-0.5)*2.0);
-        // Heat mode: full thermal camera palette, shown even without ink
-        float heatDn = max(dn, u_heat * te * 0.6);
-        cc = mix(cc, thermalPalette(te), u_heat);
-        float al = heatDn * 0.28 * (1.0 + te * 2.0);
-        acc.rgb += cc * al * (1.0 - acc.a);
-        acc.a   += al * (1.0 - acc.a);
-        if (acc.a > 0.96) break;
-      }
+// Thermal camera palette (0..1): black → purple → red → orange → yellow → white
+function _thermalPalette(t) {
+  const s = [
+    [0.0, [0,   0,   0  ]],
+    [0.2, [70,  0,   120]],
+    [0.4, [200, 0,   0  ]],
+    [0.6, [255, 120, 0  ]],
+    [0.8, [255, 255, 0  ]],
+    [1.0, [255, 255, 255]],
+  ];
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < s.length - 1; i++) {
+    if (t <= s[i + 1][0]) {
+      const f = (t - s[i][0]) / (s[i + 1][0] - s[i][0]);
+      return s[i][1].map((v, k) => Math.round(v + (s[i + 1][1][k] - v) * f));
     }
-    p += ds;
   }
-  if (acc.a < 0.003) discard;
-  fragColor = acc;
-}`;
+  return [255, 255, 255];
+}
+
+// Ink color (tNorm 0..1): deep indigo (cold) → orange-red (hot)
+function _inkPalette(t) {
+  t = Math.max(0, Math.min(1, t));
+  const cold = [26, 16, 80], warm = [255, 102, 34];
+  return cold.map((v, k) => Math.round(v + (warm[k] - v) * t));
+}
+
+function _inkColor(tNorm, heatMode) {
+  return heatMode ? _thermalPalette(tNorm) : _inkPalette(tNorm);
+}
 
 class BeakerViewer3D {
   constructor(canvas) {
@@ -656,7 +615,7 @@ class BeakerViewer3D {
     this.scene.fog        = new THREE.Fog(0x07070f, 7, 18);
 
     this.camera = new THREE.PerspectiveCamera(44, W / H, 0.1, 100);
-    this.camera.position.set(0, 0.8, 5.5);
+    this.camera.position.set(0, 2.2, 5.0);
     this.camera.lookAt(0, 0, 0);
 
     this.controls = new THREE.OrbitControls(this.camera, canvas);
@@ -666,6 +625,8 @@ class BeakerViewer3D {
     this.controls.dampingFactor   = 0.05;
     this.controls.minDistance     = 2.5;
     this.controls.maxDistance     = 9.0;
+    this.controls.minPolarAngle   = Math.PI * 0.10;  // prevent looking from straight above
+    this.controls.maxPolarAngle   = Math.PI * 0.75;  // prevent flipping past table
     this.controls.enablePan       = false;
     this._autoRotatePaused = false;
     this._autoRotateTimer  = null;
@@ -686,30 +647,13 @@ class BeakerViewer3D {
     this._turbidity = 0.0;
     this._showHeat  = 0.0;
 
-    // 3D ink volume
+    // 3D ink volume — drives canvas-layer rendering and σ²(t) validator
     const GN = 32;
     this._vol = new InkVolume3D(GN);
-
-    // DataTexture3D for density and temperature — use RGBA for broadest r128 support
-    const Tex3D = THREE.DataTexture3D || THREE.Data3DTexture;
-    const emptyRGBA = new Uint8Array(GN * GN * GN * 4);
-    this._densTex = new Tex3D(emptyRGBA.slice(), GN, GN, GN);
-    this._densTex.format    = THREE.RGBAFormat;
-    this._densTex.type      = THREE.UnsignedByteType;
-    this._densTex.minFilter = THREE.LinearFilter;
-    this._densTex.magFilter = THREE.LinearFilter;
-    this._densTex.needsUpdate = true;
-
-    this._tempTex = new Tex3D(emptyRGBA.slice(), GN, GN, GN);
-    this._tempTex.format    = THREE.RGBAFormat;
-    this._tempTex.type      = THREE.UnsignedByteType;
-    this._tempTex.minFilter = THREE.LinearFilter;
-    this._tempTex.magFilter = THREE.LinearFilter;
-    this._tempTex.needsUpdate = true;
-
-    // Pre-allocate RGBA byte buffers — reused every frame to avoid GC pressure
-    this._densBytes = new Uint8Array(GN * GN * GN * 4);
-    this._tempBytes = new Uint8Array(GN * GN * GN * 4);
+    // Canvas layer arrays — populated in _build()
+    this._inkCtx  = [];
+    this._inkTex  = [];
+    this._inkMesh = [];
 
     this._build();
     window.addEventListener('resize', () => {
@@ -747,24 +691,20 @@ class BeakerViewer3D {
 
     // Glass beaker — MeshPhysicalMaterial with transmission
     this.glassMat = new THREE.MeshPhysicalMaterial({
-      color: 0xeef8ff, transparent: true, opacity: 0.22,
+      color: 0xeef8ff, transparent: true, opacity: 0.25,
       roughness: 0.04, metalness: 0.0,
-      transmission: 0.88, thickness: 0.4, ior: 1.50,
+      transmission: 0.70, thickness: 0.4, ior: 1.50,
       clearcoat: 1.0, clearcoatRoughness: 0.04,
       side: THREE.DoubleSide, depthWrite: false,
     });
-    this.scene.add(new THREE.Mesh(
-      new THREE.CylinderGeometry(_BR * 1.05, _BR, _BH, 48, 1, true), this.glassMat));
+    const glassGeo = new THREE.CylinderGeometry(_BR * 1.05, _BR, _BH, 48, 1, true);
+    this.scene.add(new THREE.Mesh(glassGeo, this.glassMat));
+    // Cyan wireframe edges — exact same geometry/scale as the glass cylinder
+    const edgesMat = new THREE.LineBasicMaterial({ color: 0x00ccee, transparent: true, opacity: 0.55 });
+    this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(glassGeo), edgesMat));
+
     const bot = new THREE.Mesh(new THREE.CircleGeometry(_BR * 1.00, 48), this.glassMat);
     bot.rotation.x = -Math.PI / 2; bot.position.y = -_BH / 2; this.scene.add(bot);
-    // Beaker lip — simple line loop, NOT a torus (torus with clearcoat was the rogue ring)
-    const lipPts = [];
-    for (let a = 0; a <= 48; a++) {
-      const ang = a / 48 * Math.PI * 2;
-      lipPts.push(new THREE.Vector3(Math.cos(ang) * _BR * 1.04, _BH / 2, Math.sin(ang) * _BR * 1.04));
-    }
-    this.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(lipPts),
-      new THREE.LineBasicMaterial({ color: 0xaaccdd, transparent: true, opacity: 0.50 })));
 
     // Graduated tick rings
     for (let k = 1; k <= 5; k++) {
@@ -786,64 +726,103 @@ class BeakerViewer3D {
     const waterH = _BH * (1 - WATER_SURFACE_FRAC) - 0.06;
     this.surfGeo = new THREE.PlaneGeometry(_BR * 2 * 0.95, _BR * 2 * 0.95, 28, 28);
     this.surfMat = new THREE.MeshPhysicalMaterial({
-      color: 0x1a66cc, transparent: true, opacity: 0.55,
-      roughness: 0.06, metalness: 0.15,
-      transmission: 0.30, ior: 1.33, depthWrite: false,
+      color: 0x3a7bd5, transparent: true, opacity: 0.18,
+      roughness: 0.05, metalness: 0.0,
+      transmission: 0.85, ior: 1.33, depthWrite: false,
     });
     this.surfMesh = new THREE.Mesh(this.surfGeo, this.surfMat);
     this.surfMesh.rotation.x = -Math.PI / 2; this.surfMesh.position.y = _Y_SURF;
     this.scene.add(this.surfMesh);
 
-    // Volumetric ink box — rendered with raymarching shader
-    this._volMat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3 || '300 es',
-      uniforms: {
-        u_dens:   { value: this._densTex },
-        u_temp:   { value: this._tempTex },
-        u_inkCol: { value: new THREE.Color(0x0a1a4a).convertSRGBToLinear() },
-        u_heat:   { value: 0.0 },
-        u_cam:    { value: new THREE.Vector3() },
-      },
-      vertexShader:   _VERT,
-      fragmentShader: _FRAG,
-      transparent: true, depthWrite: false, side: THREE.FrontSide,
-    });
-    this._volMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this._volMat);
-    this._volMesh.scale.set(_BR * 2, waterH, _BR * 2);
-    this._volMesh.position.y = _Y_SURF - waterH / 2;
-    this.scene.add(this._volMesh);
+    // Ink volume layers — 10 horizontal canvas-texture circles spanning water depth
+    const waterBottom = _Y_SURF - waterH;
 
-    // Falling drop sphere
+    // Dark water backdrop — closed BackSide cylinder that blocks table bleed-through
+    // from ALL camera angles. BackSide = interior faces face outward toward camera.
+    const darkBGMat = new THREE.MeshBasicMaterial({ color: 0x040912, side: THREE.BackSide });
+    const darkBGMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(_BR * 0.94, _BR * 0.94, waterH + 0.06, 48, 1, false),
+      darkBGMat
+    );
+    darkBGMesh.position.y = _Y_SURF - waterH / 2;
+    this.scene.add(darkBGMesh);
+
+    const INK_LAYERS = 10;
+    const INK_LAYER_SZ = 128;
+    for (let i = 0; i < INK_LAYERS; i++) {
+      const oc = document.createElement('canvas');
+      oc.width = INK_LAYER_SZ; oc.height = INK_LAYER_SZ;
+      const ctx = oc.getContext('2d');
+      const tex = new THREE.CanvasTexture(oc);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      const t = i / (INK_LAYERS - 1);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, depthWrite: false,
+        side: THREE.DoubleSide, opacity: 0.88,
+      });
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(_BR * 0.96, 48), mat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = waterBottom + t * (_Y_SURF - waterBottom);
+      this.scene.add(mesh);
+      this._inkCtx.push(ctx);
+      this._inkTex.push(tex);
+      this._inkMesh.push(mesh);
+    }
+
+    // Falling drop sphere — simple emissive material
     this.dropMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 10),
-      new THREE.MeshPhysicalMaterial({
-        color: 0xff2200, emissive: 0xff1100, emissiveIntensity: 1.2,
-        transparent: true, opacity: 0.90, transmission: 0.25, roughness: 0.1,
+      new THREE.MeshStandardMaterial({
+        color: 0xff3300, emissive: 0xff2200, emissiveIntensity: 2.5,
+        roughness: 0.2, metalness: 0.0,
       }));
     this.dropMesh.visible = false;
+    this.dropMesh.position.set(0, 999, 0);
     this.scene.add(this.dropMesh);
   }
 
-  _uploadVolume() {
-    const { N, ink, temp, ambTemp } = this._vol;
-    const sz = N * N * N;
-    const dB = this._densBytes;
-    const tB = this._tempBytes;
-    const invRange = 1.0 / Math.max(0.001, 1 - ambTemp);
-    for (let i = 0; i < sz; i++) {
-      const d = Math.round(Math.min(255, ink[i] * 255));
-      const t = Math.round(Math.min(255, Math.max(0, (temp[i] - ambTemp) * invRange) * 255));
-      // Only R channel is sampled in shader; other channels left 0
-      dB[i * 4]     = d;
-      tB[i * 4]     = t;
-    }
-    this._densTex.image.data = dB;
-    this._tempTex.image.data = tB;
-    this._densTex.needsUpdate = true;
-    this._tempTex.needsUpdate = true;
+  _updateInkLayers() {
+    const { N, ink, temp } = this._vol;
+    const hm  = this._showHeat > 0.5;
+    const LS  = 128;         // canvas size per layer
+    const IL  = 10;          // number of layers
+    const cW  = LS / N;      // canvas pixels per grid cell
 
-    // Camera in volume local space — updated every frame for correct raymarching
-    const localCam = this._volMesh.worldToLocal(this.camera.position.clone());
-    this._volMat.uniforms.u_cam.value.copy(localCam);
+    for (let li = 0; li < IL; li++) {
+      const ctx   = this._inkCtx[li];
+      if (!ctx) continue;
+      const gridY = Math.floor((li / (IL - 1)) * (N - 1));
+      ctx.clearRect(0, 0, LS, LS);
+
+      for (let gx = 0; gx < N; gx++) {
+        for (let gz = 0; gz < N; gz++) {
+          // Clip to cylinder interior (r < 0.47 of grid half-width)
+          const nx = (gx + 0.5) / N - 0.5;
+          const nz = (gz + 0.5) / N - 0.5;
+          if (nx * nx + nz * nz > 0.22) continue;
+
+          const vi = gx + gridY * N + gz * N * N;
+          const d  = ink[vi];
+          if (d < 0.015) continue;
+
+          const col   = _inkColor(temp[vi], hm);
+          const alpha = Math.min(0.98, d * 2.6);
+          const px    = (gx + 0.5) * cW;
+          const pz    = (gz + 0.5) * cW;
+          const r     = cW * (0.90 + d * 1.4);
+
+          const g = ctx.createRadialGradient(px, pz, 0, px, pz, r);
+          g.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${alpha.toFixed(3)})`);
+          g.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(px, pz, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      this._inkTex[li].needsUpdate = true;
+    }
   }
 
   // Called from main when a drop lands — inject into 3D volume
@@ -859,7 +838,7 @@ class BeakerViewer3D {
 
   setGlassOpacity(v) { this.glassMat.opacity = v; this.glassMat.needsUpdate = true; }
   setTurbidity(v)    { this._turbidity = v; }
-  setHeatMode(on)    { this._showHeat = on ? 1.0 : 0.0; this._volMat.uniforms.u_heat.value = this._showHeat; }
+  setHeatMode(on)    { this._showHeat = on ? 1.0 : 0.0; }
   setD(D_nm2s)       { this._vol.D_vol = 0.08 * (D_nm2s / 0.8); }
 
   toggleAutoRotate() {
@@ -936,7 +915,7 @@ class BeakerViewer3D {
       return true;
     });
 
-    this._uploadVolume();
+    this._updateInkLayers();
   }
 
   render() { this.controls.update(); this.renderer.render(this.scene, this.camera); }
@@ -1031,6 +1010,22 @@ class RoomViewer3D {
     floor.rotation.x = -Math.PI / 2; this.scene.add(floor);
     this.scene.add(new THREE.GridHelper(_ROOM_W, 16, 0x1e1e2e, 0x181825));
 
+    // Heat floor — canvas texture showing gas concentration as thermal glow
+    const hfc = document.createElement('canvas');
+    hfc.width = 256; hfc.height = 256;
+    this._heatFCtx = hfc.getContext('2d');
+    this._heatFTex = new THREE.CanvasTexture(hfc);
+    this._heatFTex.minFilter = THREE.LinearFilter;
+    const heatFloor = new THREE.Mesh(
+      new THREE.PlaneGeometry(_ROOM_W * 0.95, _ROOM_D * 0.95),
+      new THREE.MeshBasicMaterial({
+        map: this._heatFTex, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      })
+    );
+    heatFloor.rotation.x = -Math.PI / 2;
+    heatFloor.position.y = 0.02;
+    this.scene.add(heatFloor);
+
     const ceilMat = new THREE.MeshStandardMaterial({ color: 0x0e0e18, roughness: 1.0 });
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(_ROOM_W, _ROOM_D), ceilMat);
     ceil.rotation.x = Math.PI / 2; ceil.position.y = _ROOM_H; this.scene.add(ceil);
@@ -1094,6 +1089,32 @@ class RoomViewer3D {
     this._srcLight.position.set(0, 0.90, 0);
   }
 
+  _updateHeatFloor(gasRoom) {
+    const GN = gasRoom.N, C = gasRoom.C;
+    const LS = 256, cW = LS / GN;
+    const ctx = this._heatFCtx;
+    ctx.clearRect(0, 0, LS, LS);
+    for (let x = 0; x < GN; x++) {
+      for (let z = 0; z < GN; z++) {
+        const c = C[x + z * GN];
+        if (c < 5e-6) continue;
+        const t     = Math.min(1, Math.sqrt(c * 400));
+        const col   = _thermalPalette(t);
+        const alpha = Math.min(0.80, t * 1.8);
+        const px    = (x + 0.5) * cW, pz = (z + 0.5) * cW;
+        const r     = cW * (0.8 + t * 1.5);
+        const g     = ctx.createRadialGradient(px, pz, 0, px, pz, r);
+        g.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${alpha.toFixed(3)})`);
+        g.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, pz, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    this._heatFTex.needsUpdate = true;
+  }
+
   _updateFogTexture(gasRoom) {
     const GN = gasRoom.N, C = gasRoom.C;
     const img = this._fogCtx.createImageData(GN, GN);
@@ -1133,6 +1154,7 @@ class RoomViewer3D {
       else mat.opacity = 0;
     }
     this._updateFogTexture(gasRoom);
+    this._updateHeatFloor(gasRoom);
   }
 
   render() { this.controls.update(); this.renderer.render(this.scene, this.camera); }
@@ -1256,7 +1278,7 @@ function loop() {
 
     // Step 3D volume
     if (viewer3d) {
-      viewer3d._vol.D_vol = 0.08 * (sim.D_nm2s / 0.8);
+      viewer3d._vol.D_vol = 0.008 * (sim.D_nm2s / 0.8);
       viewer3d._vol.step(timeScale, sim.buoyancyScale);
     }
 
