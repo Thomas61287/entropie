@@ -4,167 +4,673 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Entropy in Motion</title>
-  <link rel="stylesheet" href="style.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; color: #c8c8e0; font-family: 'Courier New', Courier, monospace; overflow: hidden; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    #header { flex-shrink: 0; height: 44px; background: #0a0a14; border-bottom: 1px solid #1a1a2e; display: flex; align-items: center; padding: 0 16px; gap: 10px; }
+    #watermark { font-size: 11px; font-weight: bold; color: #00ffcc; letter-spacing: 2px; opacity: 0.65; white-space: nowrap; }
+    .spacer { flex: 1; }
+    .tab-btn { background: transparent; border: 1px solid #2a2a3e; color: #666; padding: 5px 14px; font-family: inherit; font-size: 11px; cursor: pointer; letter-spacing: 0.5px; transition: border-color 0.15s, color 0.15s; }
+    .tab-btn:hover { border-color: rgba(0,255,204,0.35); color: #aaa; }
+    .tab-btn.active { border-color: #00ffcc; color: #00ffcc; background: rgba(0,255,204,0.04); }
+    .panel { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .panel.active { display: flex; }
+    .sim-canvas { flex: 1; min-height: 0; width: 100%; display: block; background: #000; }
+    #canvas-sandbox { cursor: crosshair; }
+    .ctrl-bar { flex-shrink: 0; background: #0a0a14; border-top: 1px solid #1a1a2e; padding: 6px 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 46px; }
+    .ctrl-group { display: flex; align-items: center; gap: 5px; }
+    .ctrl-label { font-size: 10px; color: #666; white-space: nowrap; }
+    .ctrl-val { font-size: 10px; color: #00ffcc; min-width: 26px; }
+    input[type=range] { width: 70px; accent-color: #00ffcc; cursor: pointer; vertical-align: middle; }
+    .btn { background: transparent; border: 1px solid #2a2a3e; color: #999; padding: 3px 9px; font-family: inherit; font-size: 11px; cursor: pointer; letter-spacing: 0.3px; transition: all 0.12s; white-space: nowrap; }
+    .btn:hover { border-color: rgba(0,255,204,0.4); color: #ddd; }
+    .btn.on, .btn.primary { border-color: #00ffcc; color: #00ffcc; background: rgba(0,255,204,0.05); }
+    .divider { width: 1px; height: 20px; background: #1a1a2e; flex-shrink: 0; }
+    .stat-item { font-size: 10px; color: #777; white-space: nowrap; }
+    .stat-item .val { color: #00ffcc; font-weight: bold; }
+  </style>
 </head>
 <body>
-
-<div class="watermark">ENTROPY IN MOTION</div>
-
-<!-- Two fullscreen 3D canvases -->
-<div class="scene-row">
-  <canvas id="beaker-canvas" width="728" height="720" style="display:block"></canvas>
-  <canvas id="room-canvas"   width="728" height="720" style="display:block"></canvas>
-</div>
-
-<!-- Minimal control bar -->
-<div class="control-bar">
-  <button id="btnDrop"  class="ctrl-btn primary">💧 Druppel</button>
-  <button id="btnReset" class="ctrl-btn">↺ Reset</button>
-
-  <div class="bar-divider"></div>
-
-  <div class="ctrl-group">
-    <span class="ctrl-label">Snelheid</span>
-    <input type="range" id="speedSlider" min="0.005" max="0.5" step="0.005" value="0.02">
-    <span class="ctrl-val" id="speedVal">2%</span>
+<div id="app">
+  <div id="header">
+    <span id="watermark">ENTROPY IN MOTION</span>
+    <div class="spacer"></div>
+    <button class="tab-btn active" data-tab="sandbox">Deeltjes Sandbox</button>
+    <button class="tab-btn" data-tab="boltzmann">Boltzmann Rooster</button>
   </div>
 
-  <div class="ctrl-group">
-    <span class="ctrl-label">T inkt</span>
-    <input type="range" id="tempSlider" min="10" max="95" step="1" value="65">
-    <span class="ctrl-val" id="tempVal">65°C</span>
-  </div>
-
-  <div class="bar-divider"></div>
-
-  <button id="btnFysica" class="ctrl-btn">Fysica ▲</button>
-</div>
-
-<!-- Physics panel — slides in from right -->
-<div id="physicsOverlay" class="physics-overlay">
-  <div class="ov-header">
-    <span class="ov-title-main">FYSICA</span>
-    <button id="btnCloseOverlay" class="ctrl-btn close-btn">✕</button>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">S(t) — Entropie</div>
-    <canvas id="entropyCanvas" width="284" height="90" style="display:block"></canvas>
-    <div class="ov-time">t = <span id="fSimTime">0.0</span> s</div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">S = k · ln(W)</div>
-    <div class="stat-grid">
-      <span class="sl">W (bezet)</span>           <span class="sv" id="fW">0</span>
-      <span class="sl">ln(W)</span>                <span class="sv" id="fLogW">0</span>
-      <span class="sl">S (J/K)</span>             <span class="sv cyan" id="fS">—</span>
-      <span class="sl">Gem. T (°C)</span>         <span class="sv" id="fT">—</span>
-      <span class="sl">Inktdekking</span>         <span class="sv" id="fCov">0 %</span>
+  <!-- MODULE 1 -->
+  <div class="panel active" id="panel-sandbox">
+    <canvas class="sim-canvas" id="canvas-sandbox"></canvas>
+    <div class="ctrl-bar">
+      <button class="btn primary" id="btn-play">&#9654; Play</button>
+      <button class="btn" id="btn-clear">Wis canvas</button>
+      <button class="btn" id="btn-impulse">Wis impuls</button>
+      <div class="divider"></div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Spawns/klik</span>
+        <input type="range" id="sl-spawns" min="1" max="500" value="100">
+        <span class="ctrl-val" id="val-spawns">100</span>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Straal</span>
+        <input type="range" id="sl-radius" min="1" max="8" step="0.5" value="3">
+        <span class="ctrl-val" id="val-radius">3</span>
+      </div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Dichtheid</span>
+        <input type="range" id="sl-density" min="1" max="10" value="5">
+        <span class="ctrl-val" id="val-density">5</span>
+      </div>
+      <div class="divider"></div>
+      <button class="btn" id="btn-elastic">Complexe botsingen: UIT</button>
+      <button class="btn" id="btn-showgrid">Toon grid: UIT</button>
+      <div class="divider"></div>
+      <div class="stat-item">Deeltjes: <span class="val" id="stat-count">0</span></div>
+      <div class="stat-item">Gem. snelheid: <span class="val" id="stat-speed">0.00</span></div>
+      <div class="stat-item">Spreiding: <span class="val" id="stat-spread">0%</span></div>
     </div>
   </div>
 
-  <div class="ov-block">
-    <div class="ov-section-title">Grootheden</div>
-    <div class="stat-grid">
-      <span class="sl">D — Stokes-Einstein</span>   <span class="sv cyan" id="fD">—</span>
-      <span class="sl">Carnot η<sub>max</sub></span> <span class="sv" id="fCarnot">—</span>
-      <span class="sl">Osmotische druk Π</span>     <span class="sv" id="fOsmotic">—</span>
-      <span class="sl">ΔS thermisch</span>           <span class="sv" id="fCumDS">—</span>
-      <span class="sl">Rayleigh-getal Ra</span>      <span class="sv" id="fRa">—</span>
-    </div>
-    <div class="ov-formula">D = k<sub>B</sub>T/6πηr &nbsp;·&nbsp; Ra &gt; 1708 → convectie</div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">Diffusie Validatie σ²(t)</div>
-    <canvas id="diffCanvas" width="284" height="68" style="display:block;width:100%"></canvas>
-    <div style="display:flex;justify-content:space-between;margin-top:3px">
-      <span style="font:8px monospace;color:#00ffcc">— σ² gemeten</span>
-      <span style="font:8px monospace;color:#ff8800">-- 6Dt theorie</span>
-    </div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">Parameters</div>
-    <div class="ov-row">
-      <label>T water (°C)</label>
-      <input type="range" id="waterTempC" min="1" max="80" step="1" value="15">
-      <span class="ctrl-val" id="waterTempCVal">15</span>
-    </div>
-    <div class="ov-row">
-      <label>D (×10⁻⁹ m²/s)</label>
-      <input type="range" id="D_nm2s" min="0.1" max="3.0" step="0.05" value="0.8">
-      <span class="ctrl-val" id="D_nm2sVal">0.80</span>
-    </div>
-    <div class="ov-row">
-      <label>η (mPa·s)</label>
-      <input type="range" id="viscosity" min="0.3" max="10" step="0.1" value="1.0">
-      <span class="ctrl-val" id="viscosityVal">1.0</span>
-    </div>
-    <div class="ov-row">
-      <label>Warmte α</label>
-      <input type="range" id="heatAlpha" min="0.1" max="5.0" step="0.05" value="1.5">
-      <span class="ctrl-val" id="heatAlphaVal">1.5</span>
-    </div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">Experiment</div>
-    <div class="ov-row">
-      <label>Druppelgrootte</label>
-      <input type="range" id="dropRadius" min="2" max="8" step="1" value="4">
-      <span class="ctrl-val" id="dropRadiusVal">4</span>
-    </div>
-    <div class="ov-row">
-      <label>Zinksnelheid</label>
-      <input type="range" id="gravScale" min="0.1" max="3.0" step="0.1" value="1.0">
-      <span class="ctrl-val" id="gravScaleVal">1.0</span>
-    </div>
-    <div class="ov-row">
-      <label>Convectie-sterkte</label>
-      <input type="range" id="buoyScale" min="0.1" max="3.0" step="0.1" value="1.0">
-      <span class="ctrl-val" id="buoyScaleVal">1.0</span>
-    </div>
-    <div class="ov-row">
-      <label>Glas-transparantie</label>
-      <input type="range" id="glassOpacity" min="0.05" max="0.45" step="0.01" value="0.22">
-      <span class="ctrl-val" id="glassOpacityVal">0.22</span>
-    </div>
-    <div class="ov-row">
-      <label>Water troebelheid</label>
-      <input type="range" id="waterTurbidity" min="0.0" max="1.0" step="0.05" value="0.0">
-      <span class="ctrl-val" id="waterTurbidityVal">0.00</span>
-    </div>
-    <div class="ov-btns">
-      <button id="btnHeatMode"     class="ctrl-btn full">Warmtebeeld: UIT</button>
-      <button id="btnCameraToggle" class="ctrl-btn full">Camera: Auto ↻</button>
-    </div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">Acties</div>
-    <div class="ov-btns">
-      <button id="btnReverse"   class="ctrl-btn danger full">⏪ Tijdomkering</button>
-      <button id="btnExportCSV" class="ctrl-btn full">📥 Export CSV</button>
-    </div>
-  </div>
-
-  <div class="ov-block">
-    <div class="ov-section-title">Formules (H1–H5)</div>
-    <div class="ov-info">
-      <span>∂C/∂t = D·∇²C</span> — Fick 2e wet (H1)<br>
-      <span>J = −D·∂C/∂x</span> — Fick 1e wet (H1)<br>
-      <span>S = k·ln(W)</span> — Boltzmann (H4)<br>
-      <span>ΔS = Q/T</span> — warmteoverdracht (H3)<br>
-      <span>η = 1−T<sub>c</sub>/T<sub>h</sub></span> — Carnot (H2)<br>
-      <span>ΔS<sub>totaal</sub> ≥ 0</span> — 2e hoofdwet (H5)
+  <!-- MODULE 2 -->
+  <div class="panel" id="panel-boltzmann">
+    <canvas class="sim-canvas" id="canvas-boltzmann"></canvas>
+    <div class="ctrl-bar">
+      <button class="btn" id="btn-connect">Verbinden: UIT</button>
+      <button class="btn primary" id="btn-reset-boltz">Reset</button>
+      <div class="divider"></div>
+      <div class="ctrl-group">
+        <span class="ctrl-label">Snelheid</span>
+        <input type="range" id="sl-speed-boltz" min="1" max="200" value="20">
+        <span class="ctrl-val" id="val-speed-boltz">20</span>
+      </div>
+      <div class="divider"></div>
+      <div class="stat-item">Ticks: <span class="val" id="stat-ticks">0</span></div>
+      <div class="stat-item">q&#x2095;&#x2091;&#x2091;&#x209C;: <span class="val" id="stat-qhot">7</span></div>
+      <div class="stat-item">W: <span class="val" id="stat-W">411,840</span></div>
+      <div class="stat-item">ln(W): <span class="val" id="stat-lnW">12.929</span></div>
+      <div class="stat-item">S: <span class="val" id="stat-S">1.78e-22 J/K</span></div>
+      <div class="stat-item">&#916;S: <span class="val" id="stat-dS">+0.00e+0</span></div>
     </div>
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script src="src/bundle.js"></script>
+<script>
+// ─────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────
+function resizeCanvas(canvas) {
+  var rect = canvas.getBoundingClientRect();
+  if (rect.width < 10 || rect.height < 10) return false;
+  var w = Math.floor(rect.width), h = Math.floor(rect.height);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h; return true;
+  }
+  return false;
+}
+
+function rrPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+// ─────────────────────────────────────────────
+// TAB SWITCHING
+// ─────────────────────────────────────────────
+var activeTab = 'sandbox';
+
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var tab = btn.dataset.tab;
+    if (tab === activeTab) return;
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
+    document.getElementById('panel-' + tab).classList.add('active');
+    if (tab === 'boltzmann') {
+      sandboxLoopActive = false;
+      startBoltzLoop();
+    } else {
+      boltzLoopActive = false;
+      startSandboxLoop();
+    }
+    activeTab = tab;
+  });
+});
+
+// ═════════════════════════════════════════════
+// MODULE 2 — BOLTZMANN ROOSTER
+// ═════════════════════════════════════════════
+var KB = 1.380649e-23;
+var W_TABLE = [19448, 91520, 231660, 411840, 566280, 627264, 566280, 411840, 231660, 91520, 19448];
+var W_TOTAL = 3268760;
+
+var atomCounts   = new Array(16).fill(0);
+var quantumAtoms = new Array(10).fill(0);
+var visits       = new Array(11).fill(0);
+var totalTicks   = 0;
+var boltzConnected = false;
+var boltzSpeed   = 20;
+var bridgeGlow   = [0, 0];
+var S_initial    = KB * Math.log(W_TABLE[7]);
+var boltzLoopActive = false;
+
+function initBoltzmann() {
+  atomCounts.fill(0); quantumAtoms.fill(0); visits.fill(0);
+  totalTicks = 0; boltzConnected = false;
+  bridgeGlow[0] = 0; bridgeGlow[1] = 0;
+  // 7 quanta → hot grid (atoms 0-7)
+  for (var q = 0; q < 7; q++) {
+    var a = Math.floor(Math.random() * 8);
+    quantumAtoms[q] = a; atomCounts[a]++;
+  }
+  // 3 quanta → cold grid (atoms 8-15)
+  for (var q2 = 7; q2 < 10; q2++) {
+    var a2 = 8 + Math.floor(Math.random() * 8);
+    quantumAtoms[q2] = a2; atomCounts[a2]++;
+  }
+  S_initial = KB * Math.log(W_TABLE[7]);
+  var btnC = document.getElementById('btn-connect');
+  btnC.textContent = 'Verbinden: UIT'; btnC.classList.remove('on');
+  updateBoltzStats();
+}
+
+function getBoltzNeighbors(idx) {
+  var nb = [];
+  if (idx < 8) {
+    var row = Math.floor(idx / 4), col = idx % 4;
+    if (row > 0) nb.push((row - 1) * 4 + col);
+    if (row < 1) nb.push((row + 1) * 4 + col);
+    if (col > 0) nb.push(row * 4 + col - 1);
+    if (col < 3) nb.push(row * 4 + col + 1);
+    if (boltzConnected && col === 3) nb.push(8 + row * 4);
+  } else {
+    var loc = idx - 8, row2 = Math.floor(loc / 4), col2 = loc % 4;
+    if (row2 > 0) nb.push(8 + (row2 - 1) * 4 + col2);
+    if (row2 < 1) nb.push(8 + (row2 + 1) * 4 + col2);
+    if (col2 > 0) nb.push(8 + row2 * 4 + col2 - 1);
+    if (col2 < 3) nb.push(8 + row2 * 4 + col2 + 1);
+    if (boltzConnected && col2 === 0) nb.push(row2 * 4 + 3);
+  }
+  return nb;
+}
+
+function tickBoltzmann() {
+  var q = Math.floor(Math.random() * 10);
+  var cur = quantumAtoms[q];
+  var nb = getBoltzNeighbors(cur);
+  if (!nb.length) return;
+  var next = nb[Math.floor(Math.random() * nb.length)];
+  if ((cur < 8) !== (next < 8)) {
+    var r = cur < 8 ? Math.floor(cur / 4) : Math.floor((cur - 8) / 4);
+    bridgeGlow[r] = Math.min(1, bridgeGlow[r] + 0.7);
+  }
+  atomCounts[cur]--; atomCounts[next]++; quantumAtoms[q] = next;
+  totalTicks++;
+  visits[getQHot()]++;
+}
+
+function getQHot() {
+  var s = 0;
+  for (var i = 0; i < 8; i++) s += atomCounts[i];
+  return s;
+}
+
+function updateBoltzStats() {
+  var qh = getQHot(), W = W_TABLE[qh];
+  var lnW = Math.log(W), S = KB * lnW, dS = S - S_initial;
+  var tStr = totalTicks >= 1e6 ? (totalTicks / 1e6).toFixed(1) + 'M' : totalTicks.toLocaleString();
+  document.getElementById('stat-ticks').textContent = tStr;
+  document.getElementById('stat-qhot').textContent  = qh;
+  document.getElementById('stat-W').textContent     = W.toLocaleString();
+  document.getElementById('stat-lnW').textContent   = lnW.toFixed(3);
+  document.getElementById('stat-S').textContent     = S.toExponential(2) + ' J/K';
+  document.getElementById('stat-dS').textContent    = (dS >= 0 ? '+' : '') + dS.toExponential(2);
+}
+
+function calcLayout(W, H) {
+  var PAD = 16, LBL = 22;
+  var histH = Math.max(80, Math.floor(H * 0.28));
+  var gAH = H - histH - PAD * 3 - LBL;
+  var gAW = W - PAD * 2;
+  var GAP = Math.max(40, Math.min(80, Math.floor(gAW * 0.06)));
+  var aByH = Math.floor((gAH + 4) / 2.12);
+  var aByW = Math.floor((gAW - GAP) / 8.72);
+  var aS = Math.max(26, Math.min(aByH, aByW, 72));
+  var aG = Math.max(4, Math.floor(aS * 0.12));
+  var str = aS + aG;
+  var hGW = 3 * str + aS;
+  var totW = hGW * 2 + GAP;
+  var hL = Math.max(PAD, Math.floor((W - totW) / 2));
+  var cL = hL + hGW + GAP;
+  var hT = PAD + LBL;
+  var gBot = hT + str + aS;
+  var histTop = gBot + PAD;
+  return {
+    aS: aS, aG: aG, str: str,
+    hL: hL, cL: cL, hT: hT,
+    hGW: hGW, gBot: gBot,
+    histTop: histTop,
+    histLeft: PAD,
+    histW: gAW,
+    histH: H - histTop - PAD
+  };
+}
+
+function atomCenter(idx, L) {
+  if (idx < 8) {
+    return { x: L.hL + (idx % 4) * L.str + L.aS / 2,
+             y: L.hT + Math.floor(idx / 4) * L.str + L.aS / 2 };
+  }
+  var loc = idx - 8;
+  return { x: L.cL + (loc % 4) * L.str + L.aS / 2,
+           y: L.hT + Math.floor(loc / 4) * L.str + L.aS / 2 };
+}
+
+function drawAtom(ctx, cx, cy, count, hot, sz) {
+  var half = sz / 2, rr = Math.max(3, sz * 0.1);
+  var alpha = 0.06 + Math.min(count * 0.1, 0.5);
+  ctx.fillStyle = hot ? 'rgba(255,80,0,' + alpha + ')' : 'rgba(0,120,255,' + alpha + ')';
+  rrPath(ctx, cx - half, cy - half, sz, sz, rr); ctx.fill();
+  ctx.strokeStyle = hot ? 'rgba(255,120,0,0.5)' : 'rgba(0,140,255,0.5)';
+  ctx.lineWidth = 1;
+  rrPath(ctx, cx - half, cy - half, sz, sz, rr); ctx.stroke();
+
+  if (count > 0 && count <= 4) {
+    var dR = Math.max(2.5, sz * 0.07), ring = half * 0.68;
+    ctx.fillStyle = '#FFD700';
+    ctx.shadowBlur = 8; ctx.shadowColor = '#FFD700';
+    for (var i = 0; i < count; i++) {
+      var ang = (i / count) * Math.PI * 2 - Math.PI / 2;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(ang) * ring, cy + Math.sin(ang) * ring, dR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  var fs = Math.floor(sz * (count <= 4 ? 0.28 : 0.38));
+  ctx.font = 'bold ' + fs + 'px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = count > 0 ? '#fff' : '#2a2a3a';
+  ctx.fillText(count.toString(), cx, cy);
+}
+
+function drawHistogram(ctx, L) {
+  var top = L.histTop, left = L.histLeft, w = L.histW, h = L.histH;
+  if (h < 40) return;
+  var axH = h - 20;
+  if (axH < 20) return;
+  var maxP = W_TABLE[5] / W_TOTAL;
+  var scale = axH / maxP;
+  var bW = w / 11;
+  var pad = Math.max(1, bW * 0.1);
+  var qh = getQHot();
+
+  ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(left, top + axH); ctx.lineTo(left + w, top + axH); ctx.stroke();
+
+  ctx.font = '9px monospace'; ctx.fillStyle = '#444';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('Verdeling qₕᵉᵉᵗ  —  theorie (vaag) + simulatie (vol)  —  piek bij q=5 = max. entropie', left, top - 3);
+
+  for (var q = 0; q <= 10; q++) {
+    var bx = left + q * bW + pad;
+    var bw2 = bW - 2 * pad;
+
+    var thP = W_TABLE[q] / W_TOTAL;
+    var thH = thP * scale;
+    ctx.fillStyle = 'rgba(0,255,204,0.13)';
+    ctx.fillRect(bx, top + axH - thH, bw2, thH);
+    ctx.strokeStyle = 'rgba(0,255,204,0.25)';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(bx, top + axH - thH, bw2, thH);
+
+    var simP = totalTicks > 0 ? visits[q] / totalTicks : 0;
+    var simH = simP * scale;
+    ctx.fillStyle = q === qh ? '#ff8800' : '#00ddaa';
+    ctx.fillRect(bx + 1, top + axH - simH, bw2 - 2, simH);
+
+    ctx.font = '8px monospace';
+    ctx.fillStyle = q === qh ? '#ff8800' : '#444';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(q.toString(), bx + bw2 / 2, top + axH + 14);
+  }
+}
+
+function renderBoltzmann() {
+  var canvas = document.getElementById('canvas-boltzmann');
+  resizeCanvas(canvas);
+  var W = canvas.width, H = canvas.height;
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+
+  var L = calcLayout(W, H);
+  var qh = getQHot(), qc = 10 - qh;
+
+  // Grid backgrounds
+  var hotAlpha = 0.04 + qh / 10 * 0.14;
+  var coldAlpha = 0.04 + qc / 10 * 0.14;
+  ctx.fillStyle = 'rgba(255,80,0,' + hotAlpha + ')';
+  ctx.fillRect(L.hL - 4, L.hT - 4, L.hGW + 8, L.gBot - L.hT + 8);
+  ctx.fillStyle = 'rgba(0,120,255,' + coldAlpha + ')';
+  ctx.fillRect(L.cL - 4, L.hT - 4, L.hGW + 8, L.gBot - L.hT + 8);
+
+  // Labels
+  ctx.font = 'bold 11px monospace'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(255,130,0,0.7)'; ctx.textAlign = 'left';
+  ctx.fillText('HEET  (q=' + qh + ')', L.hL, L.hT - 6);
+  ctx.fillStyle = 'rgba(0,150,255,0.7)';
+  ctx.fillText('KOUD  (q=' + qc + ')', L.cL, L.hT - 6);
+
+  // Atoms
+  for (var i = 0; i < 16; i++) {
+    var p = atomCenter(i, L);
+    drawAtom(ctx, p.x, p.y, atomCounts[i], i < 8, L.aS);
+  }
+
+  // Bridge lines
+  if (boltzConnected) {
+    for (var row = 0; row < 2; row++) {
+      var ph = atomCenter(row * 4 + 3, L);
+      var pc = atomCenter(8 + row * 4, L);
+      var g = bridgeGlow[row];
+      ctx.beginPath();
+      ctx.moveTo(ph.x + L.aS / 2, ph.y);
+      ctx.lineTo(pc.x - L.aS / 2, pc.y);
+      ctx.shadowBlur = g > 0.05 ? 14 * g : 0;
+      ctx.shadowColor = '#00ffcc';
+      ctx.strokeStyle = g > 0.05 ? 'rgba(0,255,204,' + (0.4 + g * 0.55) + ')' : 'rgba(0,255,204,0.25)';
+      ctx.lineWidth = g > 0.05 ? 2 : 1.2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // Histogram
+  drawHistogram(ctx, L);
+
+  // Decay bridge glow
+  bridgeGlow[0] = Math.max(0, bridgeGlow[0] - 0.045);
+  bridgeGlow[1] = Math.max(0, bridgeGlow[1] - 0.045);
+
+  updateBoltzStats();
+}
+
+function startBoltzLoop() {
+  if (boltzLoopActive) return;
+  boltzLoopActive = true;
+  requestAnimationFrame(boltzFrame);
+}
+
+function boltzFrame() {
+  if (!boltzLoopActive) return;
+  for (var i = 0; i < boltzSpeed; i++) tickBoltzmann();
+  renderBoltzmann();
+  requestAnimationFrame(boltzFrame);
+}
+
+document.getElementById('btn-connect').addEventListener('click', function() {
+  boltzConnected = !boltzConnected;
+  this.textContent = boltzConnected ? 'Verbinden: AAN' : 'Verbinden: UIT';
+  this.classList.toggle('on', boltzConnected);
+});
+document.getElementById('btn-reset-boltz').addEventListener('click', function() { initBoltzmann(); });
+document.getElementById('sl-speed-boltz').addEventListener('input', function() {
+  boltzSpeed = +this.value;
+  document.getElementById('val-speed-boltz').textContent = this.value;
+});
+
+// ═════════════════════════════════════════════
+// MODULE 1 — DEELTJES SANDBOX
+// ═════════════════════════════════════════════
+var P_COLORS = ['#FF0000', '#FFA500', '#FFFF00', '#555555'];
+var MAX_P = 5000;
+
+var particles = [];
+var sandboxPlaying = false;
+var elasticMode   = false;
+var showSpatGrid  = false;
+var sandboxLoopActive = false;
+var spawnCount    = 100;
+var pRadius       = 3;
+var pDensity      = 5;
+var maxPR         = 6;
+var sDragging     = false;
+
+// Spatial hash
+function SpatialHash(cellSize) {
+  this.cs = cellSize;
+  this.cells = {};
+}
+SpatialHash.prototype.clear = function() { this.cells = {}; };
+SpatialHash.prototype.insert = function(idx, x, y) {
+  var k = Math.floor(x / this.cs) + ',' + Math.floor(y / this.cs);
+  if (!this.cells[k]) this.cells[k] = [];
+  this.cells[k].push(idx);
+};
+SpatialHash.prototype.query = function(x, y) {
+  var cx = Math.floor(x / this.cs), cy = Math.floor(y / this.cs), res = [];
+  for (var dx = -1; dx <= 1; dx++) {
+    for (var dy = -1; dy <= 1; dy++) {
+      var c = this.cells[(cx + dx) + ',' + (cy + dy)];
+      if (c) for (var i = 0; i < c.length; i++) res.push(c[i]);
+    }
+  }
+  return res;
+};
+
+var hash = new SpatialHash(20);
+
+function spawnParticles(x, y, n) {
+  var add = Math.min(n, MAX_P - particles.length);
+  for (var i = 0; i < add; i++) {
+    var r = pRadius * (0.8 + Math.random() * 0.4);
+    var ang = Math.random() * Math.PI * 2;
+    var spd = Math.random();
+    particles.push({
+      x: x + (Math.random() - 0.5) * 4,
+      y: y + (Math.random() - 0.5) * 4,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      r: r,
+      mass: pDensity * r * r,
+      color: P_COLORS[Math.floor(Math.random() * 4)]
+    });
+  }
+  if (particles.length) {
+    maxPR = 0;
+    for (var j = 0; j < particles.length; j++) if (particles[j].r > maxPR) maxPR = particles[j].r;
+  }
+}
+
+function stepSandbox(W, H) {
+  var cs = Math.max(12, maxPR * 2.2);
+  hash = new SpatialHash(cs);
+
+  for (var i = 0; i < particles.length; i++) {
+    var p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    if (p.x - p.r < 0)   { p.x = p.r;     if (p.vx < 0) p.vx = -p.vx; }
+    if (p.x + p.r > W)   { p.x = W - p.r; if (p.vx > 0) p.vx = -p.vx; }
+    if (p.y - p.r < 0)   { p.y = p.r;     if (p.vy < 0) p.vy = -p.vy; }
+    if (p.y + p.r > H)   { p.y = H - p.r; if (p.vy > 0) p.vy = -p.vy; }
+    hash.insert(i, p.x, p.y);
+  }
+
+  for (var i2 = 0; i2 < particles.length; i2++) {
+    var p2 = particles[i2];
+    var cands = hash.query(p2.x, p2.y);
+    for (var ci = 0; ci < cands.length; ci++) {
+      var j2 = cands[ci];
+      if (j2 <= i2) continue;
+      var q2 = particles[j2];
+      var dx = q2.x - p2.x, dy = q2.y - p2.y;
+      var distSq = dx * dx + dy * dy;
+      var minD = p2.r + q2.r;
+      if (distSq >= minD * minD || distSq < 1e-6) continue;
+      var dist = Math.sqrt(distSq);
+      var nx = dx / dist, ny = dy / dist;
+      var overlap = minD - dist;
+      var tm = p2.mass + q2.mass;
+      p2.x -= nx * overlap * q2.mass / tm;
+      p2.y -= ny * overlap * q2.mass / tm;
+      q2.x += nx * overlap * p2.mass / tm;
+      q2.y += ny * overlap * p2.mass / tm;
+
+      var v1n = p2.vx * nx + p2.vy * ny;
+      var v2n = q2.vx * nx + q2.vy * ny;
+      if (v1n - v2n >= 0) continue;
+
+      if (elasticMode) {
+        var m1 = p2.mass, m2 = q2.mass, ms = m1 + m2;
+        var nv1 = ((m1 - m2) * v1n + 2 * m2 * v2n) / ms;
+        var nv2 = ((m2 - m1) * v2n + 2 * m1 * v1n) / ms;
+        p2.vx += (nv1 - v1n) * nx; p2.vy += (nv1 - v1n) * ny;
+        q2.vx += (nv2 - v2n) * nx; q2.vy += (nv2 - v2n) * ny;
+      } else {
+        var dv = v2n - v1n;
+        p2.vx += dv * nx; p2.vy += dv * ny;
+        q2.vx -= dv * nx; q2.vy -= dv * ny;
+      }
+    }
+  }
+}
+
+function renderSandbox() {
+  var canvas = document.getElementById('canvas-sandbox');
+  resizeCanvas(canvas);
+  var W = canvas.width, H = canvas.height;
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+
+  if (showSpatGrid && particles.length) {
+    var cs = Math.max(12, maxPR * 2.2);
+    ctx.strokeStyle = 'rgba(0,255,204,0.07)'; ctx.lineWidth = 0.5;
+    for (var gx = 0; gx < W; gx += cs) {
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+    }
+    for (var gy = 0; gy < H; gy += cs) {
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+    }
+  }
+
+  for (var i = 0; i < particles.length; i++) {
+    var p = particles[i];
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = p.color; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  // Stats
+  if (!particles.length) {
+    document.getElementById('stat-count').textContent  = '0';
+    document.getElementById('stat-speed').textContent  = '0.00';
+    document.getElementById('stat-spread').textContent = '0%';
+  } else {
+    document.getElementById('stat-count').textContent = particles.length;
+    var tot = 0, mnX = 1e9, mxX = -1e9, mnY = 1e9, mxY = -1e9;
+    for (var j = 0; j < particles.length; j++) {
+      var pp = particles[j];
+      tot += Math.sqrt(pp.vx * pp.vx + pp.vy * pp.vy);
+      if (pp.x < mnX) mnX = pp.x; if (pp.x > mxX) mxX = pp.x;
+      if (pp.y < mnY) mnY = pp.y; if (pp.y > mxY) mxY = pp.y;
+    }
+    document.getElementById('stat-speed').textContent  = (tot / particles.length).toFixed(2);
+    var sp = Math.round((mxX - mnX) * (mxY - mnY) / (W * H) * 100);
+    document.getElementById('stat-spread').textContent = sp + '%';
+  }
+}
+
+function startSandboxLoop() {
+  if (sandboxLoopActive) return;
+  sandboxLoopActive = true;
+  requestAnimationFrame(sandboxFrame);
+}
+
+function sandboxFrame() {
+  if (!sandboxLoopActive) return;
+  var canvas = document.getElementById('canvas-sandbox');
+  resizeCanvas(canvas);
+  if (sandboxPlaying) stepSandbox(canvas.width, canvas.height);
+  renderSandbox();
+  requestAnimationFrame(sandboxFrame);
+}
+
+// Sandbox controls
+document.getElementById('btn-play').addEventListener('click', function() {
+  sandboxPlaying = !sandboxPlaying;
+  this.textContent = sandboxPlaying ? '⏸ Pause' : '▶ Play';
+  this.classList.toggle('on', sandboxPlaying);
+});
+document.getElementById('btn-clear').addEventListener('click', function() {
+  particles = []; maxPR = 6; sandboxPlaying = false;
+  var b = document.getElementById('btn-play');
+  b.textContent = '▶ Play'; b.classList.remove('on');
+});
+document.getElementById('btn-impulse').addEventListener('click', function() {
+  for (var i = 0; i < particles.length; i++) { particles[i].vx = 0; particles[i].vy = 0; }
+});
+document.getElementById('btn-elastic').addEventListener('click', function() {
+  elasticMode = !elasticMode;
+  this.textContent = elasticMode ? 'Complexe botsingen: AAN' : 'Complexe botsingen: UIT';
+  this.classList.toggle('on', elasticMode);
+});
+document.getElementById('btn-showgrid').addEventListener('click', function() {
+  showSpatGrid = !showSpatGrid;
+  this.textContent = showSpatGrid ? 'Toon grid: AAN' : 'Toon grid: UIT';
+  this.classList.toggle('on', showSpatGrid);
+});
+document.getElementById('sl-spawns').addEventListener('input', function() {
+  spawnCount = +this.value;
+  document.getElementById('val-spawns').textContent = this.value;
+});
+document.getElementById('sl-radius').addEventListener('input', function() {
+  pRadius = +this.value;
+  document.getElementById('val-radius').textContent = this.value;
+});
+document.getElementById('sl-density').addEventListener('input', function() {
+  pDensity = +this.value;
+  document.getElementById('val-density').textContent = this.value;
+});
+
+// Canvas mouse
+var sCanvas = document.getElementById('canvas-sandbox');
+sCanvas.addEventListener('mousedown', function(e) {
+  var r = sCanvas.getBoundingClientRect();
+  sDragging = true;
+  spawnParticles(e.clientX - r.left, e.clientY - r.top, spawnCount);
+});
+sCanvas.addEventListener('mousemove', function(e) {
+  if (!sDragging || spawnCount !== 1) return;
+  var r = sCanvas.getBoundingClientRect();
+  spawnParticles(e.clientX - r.left, e.clientY - r.top, 1);
+});
+sCanvas.addEventListener('mouseup',    function() { sDragging = false; });
+sCanvas.addEventListener('mouseleave', function() { sDragging = false; });
+sCanvas.addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  var r = sCanvas.getBoundingClientRect(), t = e.touches[0];
+  spawnParticles(t.clientX - r.left, t.clientY - r.top, spawnCount);
+}, { passive: false });
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+initBoltzmann();
+startSandboxLoop();
+</script>
 </body>
 </html>
