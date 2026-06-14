@@ -546,40 +546,48 @@ sCanvas.addEventListener('touchstart', function(e) {
 // ═════════════════════════════════════════════
 var INK_GRAV = 0.05;
 var INK_DAMP = 0.992;
-var inkParticles  = [];
-var inkLoopActive = false;
-var coolingRate   = 0.997;
-var inkTempC      = 65;
-var dropSize      = 150;
-var splashFX      = [];
-var inkMode       = 'warmte'; // 'warmte' | 'concentratie'
+var AIR_GRAV = 0.18;
+var AIR_GAP  = 60;
+var inkParticles    = [];
+var inkAirParticles = [];
+var inkLoopActive   = false;
+var coolingRate     = 0.997;
+var inkTempC        = 65;
+var dropSize        = 150;
+var splashFX        = [];
+var inkMode         = 'warmte';
+var inkTime         = 0;
+var TURBULENCE_STR  = 0.4;
+var NOISE_SCALE     = 0.008;
 
-// Stofeigenschappen
-var ink_eta = 1.0;  // viscosity, mPa·s
-var ink_r   = 2;    // particle radius, nm
+var ink_eta = 1.0;
+var ink_r   = 2;
 var KB3     = 1.380649e-23;
 
 function computeD(eta_mPas, r_nm, T_celsius) {
   return (KB3 * (T_celsius + 273.15)) / (6 * Math.PI * eta_mPas * 1e-3 * r_nm * 1e-9);
 }
 
-var D_REFERENCE = computeD(1.0, 2, 65);  // ~1.24e-10 m²/s
+var D_REFERENCE = computeD(1.0, 2, 65);
 var DGRID_BASE  = 0.1;
 
 function getDgrid() {
   return DGRID_BASE * computeD(ink_eta, ink_r, inkTempC) / D_REFERENCE;
 }
 
-// 16×16 concentration grid, C_GRID[row][col]
-var CGRID_N = 16;
-var C_GRID  = [];
-for (var _cgI = 0; _cgI < CGRID_N; _cgI++) C_GRID.push(new Float32Array(CGRID_N));
+// Dynamic concentration grid (~12px cells)
+var CGRID_CELL = 12;
+var CGRID_ROWS = 0, CGRID_COLS = 0;
+var C_GRID = null;
 
-function resetCGrid() {
-  for (var i = 0; i < CGRID_N; i++) C_GRID[i].fill(0);
+function initCGrid(b) {
+  CGRID_COLS = Math.max(4, Math.floor(b.w / CGRID_CELL));
+  CGRID_ROWS = Math.max(4, Math.floor(b.h / CGRID_CELL));
+  C_GRID = new Float32Array(CGRID_ROWS * CGRID_COLS);
 }
 
-// 60-segment wall temperature around beaker perimeter
+function resetCGrid() { if (C_GRID) C_GRID.fill(0); }
+
 var WALL_N   = 60;
 var wallTemp = new Float32Array(WALL_N);
 
@@ -591,10 +599,10 @@ function getBeakerBounds(W, H) {
 }
 
 function getCGridCell(px, py, b) {
-  var col = Math.floor((px - b.x) / b.w * CGRID_N);
-  var row = Math.floor((py - b.y) / b.h * CGRID_N);
-  return { row: Math.max(0, Math.min(CGRID_N-1, row)),
-           col: Math.max(0, Math.min(CGRID_N-1, col)) };
+  var col = Math.floor((px - b.x) / b.w * CGRID_COLS);
+  var row = Math.floor((py - b.y) / b.h * CGRID_ROWS);
+  return { row: Math.max(0, Math.min(CGRID_ROWS-1, row)),
+           col: Math.max(0, Math.min(CGRID_COLS-1, col)) };
 }
 
 // Returns segment index [0..WALL_N-1] for the perimeter point nearest to (px,py)
@@ -621,6 +629,14 @@ function wallSegmentPos(i, b) {
   if (d < pw)      return { x: b.x + pw - d,  y: b.y + ph,  horiz: true  };
   d -= pw;
   return            { x: b.x,              y: b.y+ph-d,  horiz: false };
+}
+
+function noise2D(x, y) {
+  var xi = Math.floor(x), yi = Math.floor(y);
+  var xf = x - xi, yf = y - yi;
+  var u = xf*xf*(3-2*xf), v = yf*yf*(3-2*yf);
+  var h = function(i, j) { var s = Math.sin(i*127.1 + j*311.7)*43758.5453; return s - Math.floor(s); };
+  return (h(xi,yi)*(1-u)+h(xi+1,yi)*u)*(1-v) + (h(xi,yi+1)*(1-u)+h(xi+1,yi+1)*u)*v;
 }
 
 function inkTempInit() {
@@ -665,111 +681,163 @@ function fmtSciSuper(val) {
 function spawnDrop(spawnX) {
   var canvas = document.getElementById('canvas-ink');
   var b = getBeakerBounds(canvas.width, canvas.height);
+  if (CGRID_ROWS === 0) initCGrid(b);
   var cx = Math.max(b.x+10, Math.min(b.x+b.w-10, spawnX));
-  var cy = b.y + 6;
+  var waterY = b.y;
+  var sy = waterY - AIR_GAP + (Math.random()-0.5)*8;
   var tinit = inkTempInit();
-  var add = Math.min(dropSize, MAX_P - inkParticles.length);
-  splashFX.push({ x: cx, y: cy, r: 4, alpha: 0.9 });
+  var add = Math.min(dropSize, MAX_P - inkParticles.length - inkAirParticles.length);
+  splashFX.push({ x: cx, y: sy, r: 4, alpha: 0.6 });
   for (var i = 0; i < add; i++) {
     var r = 1.8 + Math.random() * 0.8;
-    inkParticles.push({ x: cx+(Math.random()-0.5)*10, y: cy+(Math.random()-0.5)*4,
-      vx: (Math.random()-0.5)*0.6, vy: 2.5+Math.random()*1.0,
-      r: r, mass: r*r*2, temp: tinit, spawnX: cx, spawnY: cy });
+    inkAirParticles.push({
+      x: cx+(Math.random()-0.5)*12, y: sy+(Math.random()-0.5)*8,
+      vx: (Math.random()-0.5)*0.8,  vy: 0.5+Math.random()*1.0,
+      r: r, mass: r*r*2, temp: tinit, spawnX: cx, spawnY: waterY
+    });
   }
 }
 
 function stepInk(W, H) {
-  if (!inkParticles.length) return;
   var b  = getBeakerBounds(W, H);
   var ib = { x: b.x+2, y: b.y+2, w: b.w-4, h: b.h-4 };
+  var waterY = b.y;
   var i, p, gi, gj;
 
-  // Physics step
-  for (i = 0; i < inkParticles.length; i++) {
-    p = inkParticles[i];
-    p.vx *= INK_DAMP; p.vy *= INK_DAMP; p.vy += INK_GRAV; p.temp *= coolingRate;
-  }
-  stepParticles(inkParticles, ib, false);
+  if (CGRID_ROWS === 0) initCGrid(b);
 
-  // Concentration grid update
-  var Dgrid = getDgrid(), gc, lap, nb2;
-  for (gi = 0; gi < CGRID_N; gi++) {
-    for (gj = 0; gj < CGRID_N; gj++) C_GRID[gi][gj] *= 0.999;
-  }
-  for (i = 0; i < inkParticles.length; i++) {
-    p = inkParticles[i]; gc = getCGridCell(p.x, p.y, b);
-    C_GRID[gc.row][gc.col] += 0.08;
-    if (gc.row > 0)         C_GRID[gc.row-1][gc.col] += 0.01;
-    if (gc.row < CGRID_N-1) C_GRID[gc.row+1][gc.col] += 0.01;
-    if (gc.col > 0)         C_GRID[gc.row][gc.col-1] += 0.01;
-    if (gc.col < CGRID_N-1) C_GRID[gc.row][gc.col+1] += 0.01;
-  }
-  // Fick diffusion (discrete Laplacian)
-  var newC = [];
-  for (gi = 0; gi < CGRID_N; gi++) newC.push(new Float32Array(CGRID_N));
-  for (gi = 0; gi < CGRID_N; gi++) {
-    for (gj = 0; gj < CGRID_N; gj++) {
-      lap = 0; nb2 = 0;
-      if (gi > 0)         { lap += C_GRID[gi-1][gj]; nb2++; }
-      if (gi < CGRID_N-1) { lap += C_GRID[gi+1][gj]; nb2++; }
-      if (gj > 0)         { lap += C_GRID[gi][gj-1]; nb2++; }
-      if (gj < CGRID_N-1) { lap += C_GRID[gi][gj+1]; nb2++; }
-      newC[gi][gj] = C_GRID[gi][gj] + Dgrid * (lap - nb2 * C_GRID[gi][gj]);
+  // Air particles: fast gravity, no damping, splash on surface crossing
+  for (i = inkAirParticles.length-1; i >= 0; i--) {
+    p = inkAirParticles[i];
+    p.vy += AIR_GRAV;
+    p.x += p.vx; p.y += p.vy;
+    if (p.x < b.x + p.r)     { p.x = b.x + p.r;     p.vx =  Math.abs(p.vx)*0.5; }
+    if (p.x > b.x+b.w - p.r) { p.x = b.x+b.w - p.r; p.vx = -Math.abs(p.vx)*0.5; }
+    if (p.y >= waterY) {
+      // Fan impulse: angles 20°–160°, sin > 0 = downward in screen coords
+      var ang = (20 + Math.random()*140) * Math.PI/180;
+      var imp = 0.5 + Math.random()*1.5;
+      p.vx += Math.cos(ang)*imp;
+      p.vy  = Math.sin(ang)*imp;
+      p.spawnX = p.x; p.spawnY = waterY;
+      inkParticles.push(p);
+      inkAirParticles.splice(i, 1);
     }
   }
-  for (gi = 0; gi < CGRID_N; gi++) C_GRID[gi] = newC[gi];
 
-  // Wall heat (Warmte mode only)
-  if (inkMode === 'warmte') {
-    var dL, dR, dT2, dB, mn, seg;
-    for (i = 0; i < inkParticles.length; i++) {
-      p = inkParticles[i];
-      dL = p.x - b.x; dR = (b.x+b.w) - p.x;
-      dT2 = p.y - b.y; dB = (b.y+b.h) - p.y;
-      mn = Math.min(dL, dR, dT2, dB);
-      if (mn < 15) {
-        seg = getWallSegment(p.x, p.y, b);
-        wallTemp[seg] = Math.min(1, wallTemp[seg] + p.temp * 0.02 * (1 - mn/15));
-      }
-    }
-    var newW = new Float32Array(WALL_N), prev, nxt;
-    for (i = 0; i < WALL_N; i++) {
-      prev = wallTemp[(i-1+WALL_N) % WALL_N];
-      nxt  = wallTemp[(i+1)        % WALL_N];
-      newW[i] = (wallTemp[i] + 0.1*(prev + nxt - 2*wallTemp[i])) * 0.97;
-    }
-    for (i = 0; i < WALL_N; i++) wallTemp[i] = newW[i];
-  }
+  inkTime += 0.005;
 
   // Splash FX
   for (var si = splashFX.length-1; si >= 0; si--) {
     splashFX[si].r += 3; splashFX[si].alpha -= 0.035;
     if (splashFX[si].alpha <= 0) splashFX.splice(si, 1);
   }
+
+  if (!inkParticles.length) return;
+
+  // Curl-noise turbulence + gravity + damping
+  var eps = 0.5;
+  for (i = 0; i < inkParticles.length; i++) {
+    p = inkParticles[i];
+    p.vx *= INK_DAMP; p.vy *= INK_DAMP; p.vy += INK_GRAV; p.temp *= coolingRate;
+    var nx1 = noise2D(p.x*NOISE_SCALE, (p.y+eps)*NOISE_SCALE + inkTime);
+    var nx2 = noise2D(p.x*NOISE_SCALE, (p.y-eps)*NOISE_SCALE + inkTime);
+    var ny1 = noise2D((p.x+eps)*NOISE_SCALE, p.y*NOISE_SCALE + inkTime);
+    var ny2 = noise2D((p.x-eps)*NOISE_SCALE, p.y*NOISE_SCALE + inkTime);
+    p.vx += ((nx1-nx2)/(2*eps)) * TURBULENCE_STR;
+    p.vy += (-(ny1-ny2)/(2*eps)) * TURBULENCE_STR;
+  }
+  stepParticles(inkParticles, ib, false);
+
+  // Concentration grid — deposit scaled for new cell area
+  var totalCells = CGRID_ROWS * CGRID_COLS;
+  var deposit    = 0.08 * ((b.w/16)*(b.h/16)) / (CGRID_CELL*CGRID_CELL);
+  var nbDep      = deposit * 0.125;
+  var Dgrid = getDgrid(), gc;
+  for (var k = 0; k < totalCells; k++) C_GRID[k] *= 0.999;
+  for (i = 0; i < inkParticles.length; i++) {
+    p = inkParticles[i]; gc = getCGridCell(p.x, p.y, b);
+    C_GRID[gc.row*CGRID_COLS + gc.col] += deposit;
+    if (gc.row > 0)            C_GRID[(gc.row-1)*CGRID_COLS + gc.col]   += nbDep;
+    if (gc.row < CGRID_ROWS-1) C_GRID[(gc.row+1)*CGRID_COLS + gc.col]   += nbDep;
+    if (gc.col > 0)            C_GRID[gc.row*CGRID_COLS + (gc.col-1)]   += nbDep;
+    if (gc.col < CGRID_COLS-1) C_GRID[gc.row*CGRID_COLS + (gc.col+1)]   += nbDep;
+  }
+
+  // Fick diffusion — isotropic 3×3 kernel
+  var newC = new Float32Array(totalCells);
+  for (gi = 0; gi < CGRID_ROWS; gi++) {
+    for (gj = 0; gj < CGRID_COLS; gj++) {
+      var cij = C_GRID[gi*CGRID_COLS+gj];
+      var cup  = gi>0            ? C_GRID[(gi-1)*CGRID_COLS+gj]   : cij;
+      var cdn  = gi<CGRID_ROWS-1 ? C_GRID[(gi+1)*CGRID_COLS+gj]   : cij;
+      var clt  = gj>0            ? C_GRID[gi*CGRID_COLS+(gj-1)]   : cij;
+      var crt  = gj<CGRID_COLS-1 ? C_GRID[gi*CGRID_COLS+(gj+1)]   : cij;
+      var cuL  = (gi>0 && gj>0)                       ? C_GRID[(gi-1)*CGRID_COLS+(gj-1)] : cij;
+      var cuR  = (gi>0 && gj<CGRID_COLS-1)            ? C_GRID[(gi-1)*CGRID_COLS+(gj+1)] : cij;
+      var cdL  = (gi<CGRID_ROWS-1 && gj>0)            ? C_GRID[(gi+1)*CGRID_COLS+(gj-1)] : cij;
+      var cdR  = (gi<CGRID_ROWS-1 && gj<CGRID_COLS-1) ? C_GRID[(gi+1)*CGRID_COLS+(gj+1)] : cij;
+      var lap  = 0.2*(cup+cdn+clt+crt) + 0.05*(cuL+cuR+cdL+cdR) - cij;
+      newC[gi*CGRID_COLS+gj] = Math.max(0, cij + Dgrid*lap);
+    }
+  }
+  C_GRID = newC;
+
+  // Wall heat (Warmte mode only, reduced smoothing for per-segment distinctness)
+  if (inkMode === 'warmte') {
+    var wdL, wdR, wdT, wdB, wmn, wseg;
+    for (i = 0; i < inkParticles.length; i++) {
+      p = inkParticles[i];
+      wdL = p.x - b.x; wdR = (b.x+b.w) - p.x;
+      wdT = p.y - b.y; wdB = (b.y+b.h) - p.y;
+      wmn = Math.min(wdL, wdR, wdT, wdB);
+      if (wmn < 15) {
+        wseg = getWallSegment(p.x, p.y, b);
+        wallTemp[wseg] = Math.min(1, wallTemp[wseg] + p.temp*0.02*(1 - wmn/15));
+      }
+    }
+    var newW = new Float32Array(WALL_N);
+    for (i = 0; i < WALL_N; i++) {
+      var wp2 = wallTemp[(i-1+WALL_N)%WALL_N], wn2 = wallTemp[(i+1)%WALL_N];
+      newW[i] = (wallTemp[i] + 0.03*(wp2 + wn2 - 2*wallTemp[i])) * 0.97;
+    }
+    for (i = 0; i < WALL_N; i++) wallTemp[i] = newW[i];
+  }
 }
+
+var inkTrailCanvas = null, inkTrailCtx = null;
 
 function renderInk() {
   var canvas = document.getElementById('canvas-ink');
   resizeCanvas(canvas);
   var W = canvas.width, H = canvas.height, ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, 0, W, H);
   var b = getBeakerBounds(W, H);
+  if (CGRID_ROWS === 0) initCGrid(b);
 
-  // Water fill
+  // Init/resize trail canvas
+  if (!inkTrailCanvas) { inkTrailCanvas = document.createElement('canvas'); inkTrailCtx = inkTrailCanvas.getContext('2d'); }
+  if (inkTrailCanvas.width !== W || inkTrailCanvas.height !== H) {
+    inkTrailCanvas.width = W; inkTrailCanvas.height = H;
+    inkTrailCtx.clearRect(0, 0, W, H);
+  }
+
+  ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, 0, W, H);
+
+  // Water fill — Concentratie uses light blue-grey for contrast
+  var wc0 = (inkMode === 'concentratie') ? '#bcd4e6' : '#003366';
+  var wc1 = (inkMode === 'concentratie') ? '#a8c8df' : '#001a33';
   var wgrad = ctx.createLinearGradient(b.x, b.y, b.x, b.y+b.h);
-  wgrad.addColorStop(0, '#003366'); wgrad.addColorStop(1, '#001a33');
+  wgrad.addColorStop(0, wc0); wgrad.addColorStop(1, wc1);
   ctx.fillStyle = wgrad; ctx.fillRect(b.x, b.y, b.w, b.h);
 
-  // Concentration grid (Concentratie mode only — rendered behind particles)
-  if (inkMode === 'concentratie') {
-    var cw = b.w / CGRID_N, ch = b.h / CGRID_N;
-    for (var gi = 0; gi < CGRID_N; gi++) {
-      for (var gj = 0; gj < CGRID_N; gj++) {
-        var cv = Math.min(1, C_GRID[gi][gj] / 5);
-        if (cv < 0.005) continue;
-        // interpolate: water #003366 → saturated indigo #2244cc
-        var cr = Math.round(cv * 34),  cg = Math.round(51*(1-cv) + cv*68), cbb = Math.round(102*(1-cv) + cv*204);
-        ctx.fillStyle = 'rgba('+cr+','+cg+','+cbb+','+(cv*0.85).toFixed(2)+')';
+  // Concentration grid (Concentratie mode — dark indigo on light water)
+  if (inkMode === 'concentratie' && CGRID_ROWS > 0) {
+    var cw = b.w / CGRID_COLS, ch = b.h / CGRID_ROWS;
+    for (var gi = 0; gi < CGRID_ROWS; gi++) {
+      for (var gj = 0; gj < CGRID_COLS; gj++) {
+        var cv = Math.min(1, C_GRID[gi*CGRID_COLS+gj] / 3);
+        if (cv < 0.01) continue;
+        ctx.fillStyle = 'rgba(26,10,46,'+(cv*0.85).toFixed(2)+')';
         ctx.fillRect(b.x + gj*cw, b.y + gi*ch, cw, ch);
       }
     }
@@ -779,6 +847,34 @@ function renderInk() {
   var sheen = ctx.createLinearGradient(b.x, b.y, b.x+10, b.y);
   sheen.addColorStop(0, 'rgba(136,204,255,0.12)'); sheen.addColorStop(1, 'rgba(136,204,255,0)');
   ctx.fillStyle = sheen; ctx.fillRect(b.x, b.y, 10, b.h);
+
+  // Air particles (simple dots falling in air zone)
+  for (var ai = 0; ai < inkAirParticles.length; ai++) {
+    var ap = inkAirParticles[ai];
+    var rgb2 = inkColorRGB(ap.temp);
+    ctx.beginPath(); ctx.arc(ap.x, ap.y, ap.r, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba('+rgb2[0]+','+rgb2[1]+','+rgb2[2]+',0.85)'; ctx.fill();
+  }
+
+  // Trail layer — Concentratie mode only: fade then stamp current positions
+  if (inkMode === 'concentratie' && inkParticles.length > 0) {
+    inkTrailCtx.fillStyle = 'rgba(188,212,230,0.06)';
+    inkTrailCtx.fillRect(b.x, b.y, b.w, b.h);
+    inkTrailCtx.globalCompositeOperation = 'source-over';
+    for (var ti = 0; ti < inkParticles.length; ti++) {
+      var tp = inkParticles[ti];
+      var gT = inkTrailCtx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, tp.r*2.0);
+      gT.addColorStop(0,   'rgba(26,10,46,0.55)');
+      gT.addColorStop(0.5, 'rgba(26,10,46,0.18)');
+      gT.addColorStop(1,   'rgba(26,10,46,0)');
+      inkTrailCtx.beginPath(); inkTrailCtx.arc(tp.x, tp.y, tp.r*2.0, 0, Math.PI*2);
+      inkTrailCtx.fillStyle = gT; inkTrailCtx.fill();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+    ctx.drawImage(inkTrailCanvas, 0, 0);
+    ctx.restore();
+  }
 
   // Ink particles — soft radial gradient, composite differs by mode
   ctx.save();
@@ -792,9 +888,9 @@ function renderInk() {
       gradP.addColorStop(0.45, 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.28)');
       gradP.addColorStop(1,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
     } else {
-      gradP.addColorStop(0,    'rgba(68,88,200,0.70)');
-      gradP.addColorStop(0.45, 'rgba(44,55,160,0.22)');
-      gradP.addColorStop(1,    'rgba(44,55,160,0)');
+      gradP.addColorStop(0,    'rgba(26,10,46,0.80)');
+      gradP.addColorStop(0.45, 'rgba(26,10,46,0.30)');
+      gradP.addColorStop(1,    'rgba(26,10,46,0)');
     }
     ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.5, 0, Math.PI*2);
     ctx.fillStyle = gradP; ctx.fill();
@@ -809,33 +905,31 @@ function renderInk() {
     ctx.lineWidth = 1.5; ctx.stroke();
   }
 
-  // Wall heat glow (Warmte mode only — drawn before glass border so glow sits behind it)
+  // Wall heat glow — non-linear alpha so even faint heat shows
   if (inkMode === 'warmte') {
     var segLen = 2*(b.w+b.h) / WALL_N;
-    ctx.save();
-    ctx.lineWidth = 3;
+    ctx.save(); ctx.lineWidth = 3;
     for (var wi = 0; wi < WALL_N; wi++) {
       var wt = wallTemp[wi];
-      if (wt < 0.02) continue;
+      if (wt < 0.005) continue;
       var wp = wallSegmentPos(wi, b);
-      var wrgb = inkColorRGB(wt);
-      ctx.shadowBlur  = Math.round(20*wt);
+      var wrgb = inkColorRGB(Math.min(1, wt*2));
+      var walpha = 0.15 + 0.85 * Math.min(1, wt);
+      ctx.shadowBlur  = Math.max(4, Math.round(20*wt));
       ctx.shadowColor = 'rgb('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+')';
-      ctx.strokeStyle = 'rgba('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+','+(0.3+wt*0.5).toFixed(2)+')';
+      ctx.strokeStyle = 'rgba('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+','+walpha.toFixed(2)+')';
       ctx.beginPath();
       var hl = segLen * 0.5;
-      if (wp.horiz) { ctx.moveTo(wp.x-hl, wp.y);  ctx.lineTo(wp.x+hl, wp.y);  }
-      else          { ctx.moveTo(wp.x, wp.y-hl);   ctx.lineTo(wp.x, wp.y+hl);  }
+      if (wp.horiz) { ctx.moveTo(wp.x-hl, wp.y); ctx.lineTo(wp.x+hl, wp.y); }
+      else          { ctx.moveTo(wp.x, wp.y-hl);  ctx.lineTo(wp.x, wp.y+hl); }
       ctx.stroke();
     }
-    ctx.shadowBlur = 0;
-    ctx.restore();
+    ctx.shadowBlur = 0; ctx.restore();
   }
 
-  // Glass border (drawn last, sits on top of glow)
+  // Glass border
   ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2;
   ctx.strokeRect(b.x, b.y, b.w, b.h);
-
   ctx.font = '9px monospace'; ctx.fillStyle = 'rgba(136,204,255,0.4)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   ctx.fillText('H₂O', b.x+b.w/2, b.y-5);
@@ -851,11 +945,11 @@ function updateInkStats(b) {
   document.getElementById('stat-D').textContent = fmtSciSuper(computeD(ink_eta, ink_r, inkTempC)) + ' m²/s';
 
   // Microstate entropy via Stirling
-  if (n > 0 && b) {
-    var counts = new Int32Array(CGRID_N * CGRID_N), gc2;
+  if (n > 0 && b && CGRID_ROWS > 0) {
+    var counts = new Int32Array(CGRID_ROWS * CGRID_COLS), gc2;
     for (var pi = 0; pi < n; pi++) {
       gc2 = getCGridCell(inkParticles[pi].x, inkParticles[pi].y, b);
-      counts[gc2.row * CGRID_N + gc2.col]++;
+      counts[gc2.row * CGRID_COLS + gc2.col]++;
     }
     var lnW_val = computeLnW_micro(counts, n);
     document.getElementById('stat-lnW-ink').textContent = lnW_val.toFixed(1);
@@ -898,6 +992,7 @@ document.getElementById('btn-mode-warmte').addEventListener('click', function() 
 document.getElementById('btn-mode-conc').addEventListener('click', function() {
   inkMode = 'concentratie'; this.classList.add('on');
   document.getElementById('btn-mode-warmte').classList.remove('on');
+  if (inkTrailCanvas) inkTrailCtx.clearRect(0, 0, inkTrailCanvas.width, inkTrailCanvas.height);
 });
 
 // Ink controls
@@ -907,7 +1002,8 @@ document.getElementById('btn-druppel').addEventListener('click', function() {
   spawnDrop(b.x + b.w/2);
 });
 document.getElementById('btn-reset-ink').addEventListener('click', function() {
-  inkParticles = []; splashFX = []; resetCGrid(); resetWallTemp();
+  inkParticles = []; inkAirParticles = []; splashFX = []; resetCGrid(); resetWallTemp();
+  if (inkTrailCanvas) inkTrailCtx.clearRect(0, 0, inkTrailCanvas.width, inkTrailCanvas.height);
 });
 document.getElementById('sl-drop-size').addEventListener('input', function() {
   dropSize = +this.value; document.getElementById('val-drop-size').textContent = this.value;
