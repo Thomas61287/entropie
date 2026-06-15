@@ -544,9 +544,10 @@ sCanvas.addEventListener('touchstart', function(e) {
 // ═════════════════════════════════════════════
 // MODULE 3 — INKT IN WATER
 // ═════════════════════════════════════════════
-var INK_GRAV = 0.05;
-var INK_DAMP = 0.992;
-var AIR_GRAV = 0.18;
+var INK_GRAV    = 0.005;  // near-zero: jitter keeps particles dispersed
+var INK_DAMP    = 0.992;
+var BASE_JITTER = 0.28;   // thermal random-walk; hotter particles jitter more
+var AIR_GRAV    = 0.18;
 var AIR_GAP  = 60;
 var inkParticles    = [];
 var inkAirParticles = [];
@@ -735,11 +736,16 @@ function stepInk(W, H) {
 
   if (!inkParticles.length) return;
 
-  // Curl-noise turbulence + gravity + damping
+  // Curl-noise turbulence + thermal jitter + residual gravity + damping
   var eps = 0.5;
   for (i = 0; i < inkParticles.length; i++) {
     p = inkParticles[i];
     p.vx *= INK_DAMP; p.vy *= INK_DAMP; p.vy += INK_GRAV; p.temp *= coolingRate;
+    // Thermal random-walk: hotter particles jitter more (kinetic theory)
+    var jitter = BASE_JITTER * (0.5 + p.temp * 1.5);
+    p.vx += (Math.random() - 0.5) * jitter;
+    p.vy += (Math.random() - 0.5) * jitter;
+    // Curl-noise turbulence for swirling structure
     var nx1 = noise2D(p.x*NOISE_SCALE, (p.y+eps)*NOISE_SCALE + inkTime);
     var nx2 = noise2D(p.x*NOISE_SCALE, (p.y-eps)*NOISE_SCALE + inkTime);
     var ny1 = noise2D((p.x+eps)*NOISE_SCALE, p.y*NOISE_SCALE + inkTime);
@@ -806,6 +812,7 @@ function stepInk(W, H) {
 }
 
 var inkTrailCanvas = null, inkTrailCtx = null;
+var concOffscreen  = null, concOffCtx  = null;
 
 function renderInk() {
   var canvas = document.getElementById('canvas-ink');
@@ -814,11 +821,14 @@ function renderInk() {
   var b = getBeakerBounds(W, H);
   if (CGRID_ROWS === 0) initCGrid(b);
 
-  // Init/resize trail canvas
+  // Init/resize helper canvases
   if (!inkTrailCanvas) { inkTrailCanvas = document.createElement('canvas'); inkTrailCtx = inkTrailCanvas.getContext('2d'); }
   if (inkTrailCanvas.width !== W || inkTrailCanvas.height !== H) {
-    inkTrailCanvas.width = W; inkTrailCanvas.height = H;
-    inkTrailCtx.clearRect(0, 0, W, H);
+    inkTrailCanvas.width = W; inkTrailCanvas.height = H; inkTrailCtx.clearRect(0, 0, W, H);
+  }
+  if (!concOffscreen)  { concOffscreen = document.createElement('canvas'); concOffCtx = concOffscreen.getContext('2d'); }
+  if (concOffscreen.width !== W || concOffscreen.height !== H) {
+    concOffscreen.width = W; concOffscreen.height = H;
   }
 
   ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, 0, W, H);
@@ -830,17 +840,24 @@ function renderInk() {
   wgrad.addColorStop(0, wc0); wgrad.addColorStop(1, wc1);
   ctx.fillStyle = wgrad; ctx.fillRect(b.x, b.y, b.w, b.h);
 
-  // Concentration grid (Concentratie mode — dark indigo on light water)
+  // Concentration grid — render to offscreen, composite blurred (no cell edges visible)
   if (inkMode === 'concentratie' && CGRID_ROWS > 0) {
+    concOffCtx.clearRect(b.x, b.y, b.w, b.h);
     var cw = b.w / CGRID_COLS, ch = b.h / CGRID_ROWS;
     for (var gi = 0; gi < CGRID_ROWS; gi++) {
       for (var gj = 0; gj < CGRID_COLS; gj++) {
         var cv = Math.min(1, C_GRID[gi*CGRID_COLS+gj] / 3);
-        if (cv < 0.01) continue;
-        ctx.fillStyle = 'rgba(26,10,46,'+(cv*0.85).toFixed(2)+')';
-        ctx.fillRect(b.x + gj*cw, b.y + gi*ch, cw, ch);
+        if (cv < 0.008) continue;
+        concOffCtx.fillStyle = 'rgba(26,10,46,'+(cv*0.92).toFixed(2)+')';
+        concOffCtx.fillRect(b.x + gj*cw, b.y + gi*ch, cw+1, ch+1);
       }
     }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+    ctx.filter = 'blur(10px)';
+    ctx.drawImage(concOffscreen, 0, 0);
+    ctx.filter = 'none';
+    ctx.restore();
   }
 
   // Left-wall glass sheen
@@ -856,44 +873,24 @@ function renderInk() {
     ctx.fillStyle = 'rgba('+rgb2[0]+','+rgb2[1]+','+rgb2[2]+',0.85)'; ctx.fill();
   }
 
-  // Trail layer — Concentratie mode only: fade then stamp current positions
-  if (inkMode === 'concentratie' && inkParticles.length > 0) {
-    inkTrailCtx.fillStyle = 'rgba(188,212,230,0.06)';
-    inkTrailCtx.fillRect(b.x, b.y, b.w, b.h);
-    inkTrailCtx.globalCompositeOperation = 'source-over';
-    for (var ti = 0; ti < inkParticles.length; ti++) {
-      var tp = inkParticles[ti];
-      var gT = inkTrailCtx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, tp.r*2.0);
-      gT.addColorStop(0,   'rgba(26,10,46,0.55)');
-      gT.addColorStop(0.5, 'rgba(26,10,46,0.18)');
-      gT.addColorStop(1,   'rgba(26,10,46,0)');
-      inkTrailCtx.beginPath(); inkTrailCtx.arc(tp.x, tp.y, tp.r*2.0, 0, Math.PI*2);
-      inkTrailCtx.fillStyle = gT; inkTrailCtx.fill();
-    }
-    ctx.save();
-    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
-    ctx.drawImage(inkTrailCanvas, 0, 0);
-    ctx.restore();
-  }
-
-  // Ink particles — soft radial gradient, composite differs by mode
+  // Ink particles — Warmte: bright additive glow / Concentratie: subtle texture over blurred field
   ctx.save();
   ctx.globalCompositeOperation = (inkMode === 'warmte') ? 'lighter' : 'source-over';
   for (var i = 0; i < inkParticles.length; i++) {
     var p = inkParticles[i];
-    var gradP = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*2.5);
     if (inkMode === 'warmte') {
+      var gradP = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*2.5);
       var rgb = inkColorRGB(p.temp);
       gradP.addColorStop(0,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.80)');
       gradP.addColorStop(0.45, 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.28)');
       gradP.addColorStop(1,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.5, 0, Math.PI*2);
+      ctx.fillStyle = gradP; ctx.fill();
     } else {
-      gradP.addColorStop(0,    'rgba(26,10,46,0.80)');
-      gradP.addColorStop(0.45, 'rgba(26,10,46,0.30)');
-      gradP.addColorStop(1,    'rgba(26,10,46,0)');
+      // Concentratie: tiny subtle dot — field dominates, particles are texture
+      ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(26,10,46,0.14)'; ctx.fill();
     }
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.5, 0, Math.PI*2);
-    ctx.fillStyle = gradP; ctx.fill();
   }
   ctx.restore();
 
