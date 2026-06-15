@@ -558,7 +558,7 @@ var dropSize        = 150;
 var splashFX        = [];
 var inkMode         = 'warmte';
 var inkTime         = 0;
-var TURBULENCE_STR  = 0.4;
+var TURBULENCE_STR  = 0.5;
 var NOISE_SCALE     = 0.008;
 
 var ink_eta = 1.0;
@@ -630,6 +630,14 @@ function wallSegmentPos(i, b) {
   if (d < pw)      return { x: b.x + pw - d,  y: b.y + ph,  horiz: true  };
   d -= pw;
   return            { x: b.x,              y: b.y+ph-d,  horiz: false };
+}
+
+function curlNoise(px, py, t, sc, ep) {
+  var n1 = noise2D(px*sc, (py+ep)*sc + t);
+  var n2 = noise2D(px*sc, (py-ep)*sc + t);
+  var n3 = noise2D((px+ep)*sc, py*sc + t);
+  var n4 = noise2D((px-ep)*sc, py*sc + t);
+  return { x: (n1-n2)/(2*ep), y: -(n3-n4)/(2*ep) };
 }
 
 function noise2D(x, y) {
@@ -736,8 +744,7 @@ function stepInk(W, H) {
 
   if (!inkParticles.length) return;
 
-  // Curl-noise turbulence + thermal jitter + residual gravity + damping
-  var eps = 0.5;
+  // Two-octave curl-noise turbulence + thermal jitter + residual gravity + damping
   for (i = 0; i < inkParticles.length; i++) {
     p = inkParticles[i];
     p.vx *= INK_DAMP; p.vy *= INK_DAMP; p.vy += INK_GRAV; p.temp *= coolingRate;
@@ -745,13 +752,11 @@ function stepInk(W, H) {
     var jitter = BASE_JITTER * (0.5 + p.temp * 1.5);
     p.vx += (Math.random() - 0.5) * jitter;
     p.vy += (Math.random() - 0.5) * jitter;
-    // Curl-noise turbulence for swirling structure
-    var nx1 = noise2D(p.x*NOISE_SCALE, (p.y+eps)*NOISE_SCALE + inkTime);
-    var nx2 = noise2D(p.x*NOISE_SCALE, (p.y-eps)*NOISE_SCALE + inkTime);
-    var ny1 = noise2D((p.x+eps)*NOISE_SCALE, p.y*NOISE_SCALE + inkTime);
-    var ny2 = noise2D((p.x-eps)*NOISE_SCALE, p.y*NOISE_SCALE + inkTime);
-    p.vx += ((nx1-nx2)/(2*eps)) * TURBULENCE_STR;
-    p.vy += (-(ny1-ny2)/(2*eps)) * TURBULENCE_STR;
+    // Two-octave curl-noise: large scale (structure) + fine scale (branching detail)
+    var c1 = curlNoise(p.x, p.y, inkTime, 0.01, 0.5);
+    var c2 = curlNoise(p.x, p.y, inkTime, 0.04, 0.5);
+    p.vx += (c1.x*0.65 + c2.x*0.35) * TURBULENCE_STR;
+    p.vy += (c1.y*0.65 + c2.y*0.35) * TURBULENCE_STR;
   }
   stepParticles(inkParticles, ib, false);
 
@@ -813,6 +818,7 @@ function stepInk(W, H) {
 
 var inkTrailCanvas = null, inkTrailCtx = null;
 var concOffscreen  = null, concOffCtx  = null;
+var glowOffscreen  = null, glowOffCtx  = null;
 
 function renderInk() {
   var canvas = document.getElementById('canvas-ink');
@@ -826,10 +832,10 @@ function renderInk() {
   if (inkTrailCanvas.width !== W || inkTrailCanvas.height !== H) {
     inkTrailCanvas.width = W; inkTrailCanvas.height = H; inkTrailCtx.clearRect(0, 0, W, H);
   }
-  if (!concOffscreen)  { concOffscreen = document.createElement('canvas'); concOffCtx = concOffscreen.getContext('2d'); }
-  if (concOffscreen.width !== W || concOffscreen.height !== H) {
-    concOffscreen.width = W; concOffscreen.height = H;
-  }
+  if (!concOffscreen) { concOffscreen = document.createElement('canvas'); concOffCtx = concOffscreen.getContext('2d'); }
+  if (concOffscreen.width !== W || concOffscreen.height !== H) { concOffscreen.width = W; concOffscreen.height = H; }
+  if (!glowOffscreen) { glowOffscreen = document.createElement('canvas'); glowOffCtx = glowOffscreen.getContext('2d'); }
+  if (glowOffscreen.width !== W || glowOffscreen.height !== H) { glowOffscreen.width = W; glowOffscreen.height = H; }
 
   ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, 0, W, H);
 
@@ -840,7 +846,7 @@ function renderInk() {
   wgrad.addColorStop(0, wc0); wgrad.addColorStop(1, wc1);
   ctx.fillStyle = wgrad; ctx.fillRect(b.x, b.y, b.w, b.h);
 
-  // Concentration grid — render to offscreen, composite blurred (no cell edges visible)
+  // Concentration grid — faint ambient glow only (trails are now the dominant Concentratie visual)
   if (inkMode === 'concentratie' && CGRID_ROWS > 0) {
     concOffCtx.clearRect(b.x, b.y, b.w, b.h);
     var cw = b.w / CGRID_COLS, ch = b.h / CGRID_ROWS;
@@ -848,7 +854,7 @@ function renderInk() {
       for (var gj = 0; gj < CGRID_COLS; gj++) {
         var cv = Math.min(1, C_GRID[gi*CGRID_COLS+gj] / 3);
         if (cv < 0.008) continue;
-        concOffCtx.fillStyle = 'rgba(26,10,46,'+(cv*0.92).toFixed(2)+')';
+        concOffCtx.fillStyle = 'rgba(26,10,46,'+(cv*0.22).toFixed(2)+')';  // max ~0.22 — subtle halo
         concOffCtx.fillRect(b.x + gj*cw, b.y + gi*ch, cw+1, ch+1);
       }
     }
@@ -873,7 +879,28 @@ function renderInk() {
     ctx.fillStyle = 'rgba('+rgb2[0]+','+rgb2[1]+','+rgb2[2]+',0.85)'; ctx.fill();
   }
 
-  // Ink particles — Warmte: bright additive glow / Concentratie: subtle texture over blurred field
+  // Trail canvas — Concentratie: slowly-fading accumulated paths (primary visual)
+  if (inkMode === 'concentratie' && inkParticles.length > 0) {
+    // Slow fade: 0.026/frame → trails persist ~38 frames (~0.63s) for filament build-up
+    inkTrailCtx.fillStyle = 'rgba(188,212,230,0.026)';
+    inkTrailCtx.fillRect(b.x, b.y, b.w, b.h);
+    inkTrailCtx.globalCompositeOperation = 'source-over';
+    for (var ti = 0; ti < inkParticles.length; ti++) {
+      var tp = inkParticles[ti];
+      var gT = inkTrailCtx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, 2.5);
+      gT.addColorStop(0,   'rgba(26,10,46,0.42)');
+      gT.addColorStop(0.6, 'rgba(26,10,46,0.12)');
+      gT.addColorStop(1,   'rgba(26,10,46,0)');
+      inkTrailCtx.beginPath(); inkTrailCtx.arc(tp.x, tp.y, 2.5, 0, Math.PI*2);
+      inkTrailCtx.fillStyle = gT; inkTrailCtx.fill();
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+    ctx.drawImage(inkTrailCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  // Live ink particles — Warmte: additive heat glow / Concentratie: visible organic dots
   ctx.save();
   ctx.globalCompositeOperation = (inkMode === 'warmte') ? 'lighter' : 'source-over';
   for (var i = 0; i < inkParticles.length; i++) {
@@ -887,9 +914,13 @@ function renderInk() {
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.5, 0, Math.PI*2);
       ctx.fillStyle = gradP; ctx.fill();
     } else {
-      // Concentratie: tiny subtle dot — field dominates, particles are texture
-      ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(26,10,46,0.14)'; ctx.fill();
+      // Concentratie: 2.5px soft dot — visible texture within the trail field
+      var gradC = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 2.5);
+      gradC.addColorStop(0,   'rgba(26,10,46,0.40)');
+      gradC.addColorStop(0.7, 'rgba(26,10,46,0.10)');
+      gradC.addColorStop(1,   'rgba(26,10,46,0)');
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2);
+      ctx.fillStyle = gradC; ctx.fill();
     }
   }
   ctx.restore();
@@ -902,29 +933,32 @@ function renderInk() {
     ctx.lineWidth = 1.5; ctx.stroke();
   }
 
-  // Wall heat glow — non-linear alpha so even faint heat shows
+  // Wall heat glow — offscreen + large blur, NO hard clip → fades naturally into dark background
   if (inkMode === 'warmte') {
+    glowOffCtx.clearRect(0, 0, W, H);
     var segLen = 2*(b.w+b.h) / WALL_N;
-    ctx.save(); ctx.lineWidth = 3;
+    glowOffCtx.lineWidth = 5;
     for (var wi = 0; wi < WALL_N; wi++) {
       var wt = wallTemp[wi];
       if (wt < 0.005) continue;
       var wp = wallSegmentPos(wi, b);
       var wrgb = inkColorRGB(Math.min(1, wt*2));
       var walpha = 0.15 + 0.85 * Math.min(1, wt);
-      ctx.shadowBlur  = Math.max(4, Math.round(20*wt));
-      ctx.shadowColor = 'rgb('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+')';
-      ctx.strokeStyle = 'rgba('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+','+walpha.toFixed(2)+')';
-      ctx.beginPath();
+      glowOffCtx.strokeStyle = 'rgba('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+','+walpha.toFixed(2)+')';
+      glowOffCtx.beginPath();
       var hl = segLen * 0.5;
-      if (wp.horiz) { ctx.moveTo(wp.x-hl, wp.y); ctx.lineTo(wp.x+hl, wp.y); }
-      else          { ctx.moveTo(wp.x, wp.y-hl);  ctx.lineTo(wp.x, wp.y+hl); }
-      ctx.stroke();
+      if (wp.horiz) { glowOffCtx.moveTo(wp.x-hl, wp.y); glowOffCtx.lineTo(wp.x+hl, wp.y); }
+      else          { glowOffCtx.moveTo(wp.x, wp.y-hl);  glowOffCtx.lineTo(wp.x, wp.y+hl); }
+      glowOffCtx.stroke();
     }
-    ctx.shadowBlur = 0; ctx.restore();
+    ctx.save();
+    ctx.filter = 'blur(22px)';
+    ctx.drawImage(glowOffscreen, 0, 0);  // no clip: blurred glow tapers into dark bg naturally
+    ctx.filter = 'none';
+    ctx.restore();
   }
 
-  // Glass border
+  // Glass border (drawn last, on top of glow)
   ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2;
   ctx.strokeRect(b.x, b.y, b.w, b.h);
   ctx.font = '9px monospace'; ctx.fillStyle = 'rgba(136,204,255,0.4)';
