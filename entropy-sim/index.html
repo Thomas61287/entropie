@@ -544,10 +544,10 @@ sCanvas.addEventListener('touchstart', function(e) {
 // ═════════════════════════════════════════════
 // MODULE 3 — INKT IN WATER
 // ═════════════════════════════════════════════
-var INK_GRAV    = 0.005;  // near-zero: jitter keeps particles dispersed
-var INK_DAMP    = 0.992;
-var BASE_JITTER = 0.28;   // thermal random-walk; hotter particles jitter more
-var AIR_GRAV    = 0.18;
+var INK_GRAV    = 0;      // neutral buoyancy: Brownian motion dominates
+var INK_DAMP    = 0.990;
+var BASE_JITTER = 0.35;   // thermal random-walk; hotter particles jitter more
+var AIR_GRAV    = 0.22;
 var AIR_GAP  = 60;
 var inkParticles    = [];
 var inkAirParticles = [];
@@ -558,7 +558,7 @@ var dropSize        = 150;
 var splashFX        = [];
 var inkMode         = 'warmte';
 var inkTime         = 0;
-var TURBULENCE_STR  = 0.5;
+var TURBULENCE_STR  = 0.65;
 var NOISE_SCALE     = 0.008;
 
 var ink_eta = 1.0;
@@ -570,7 +570,7 @@ function computeD(eta_mPas, r_nm, T_celsius) {
 }
 
 var D_REFERENCE = computeD(1.0, 2, 65);
-var DGRID_BASE  = 0.1;
+var DGRID_BASE  = 0.18;
 
 function getDgrid() {
   return DGRID_BASE * computeD(ink_eta, ink_r, inkTempC) / D_REFERENCE;
@@ -723,18 +723,18 @@ function stepInk(W, H) {
     if (p.x < b.x + p.r)     { p.x = b.x + p.r;     p.vx =  Math.abs(p.vx)*0.5; }
     if (p.x > b.x+b.w - p.r) { p.x = b.x+b.w - p.r; p.vx = -Math.abs(p.vx)*0.5; }
     if (p.y >= waterY) {
-      // Fan impulse: angles 20°–160°, sin > 0 = downward in screen coords
-      var ang = (20 + Math.random()*140) * Math.PI/180;
-      var imp = 0.5 + Math.random()*1.5;
+      // Fan impulse: full 0°–180° fan, strong lateral spread on impact
+      var ang = Math.random() * Math.PI;
+      var imp = 1.5 + Math.random()*3.0;
       p.vx += Math.cos(ang)*imp;
-      p.vy  = Math.sin(ang)*imp;
+      p.vy  = Math.sin(ang)*imp * 0.4;
       p.spawnX = p.x; p.spawnY = waterY;
       inkParticles.push(p);
       inkAirParticles.splice(i, 1);
     }
   }
 
-  inkTime += 0.005;
+  inkTime += 0.010;
 
   // Splash FX
   for (var si = splashFX.length-1; si >= 0; si--) {
