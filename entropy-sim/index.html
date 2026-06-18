@@ -979,12 +979,12 @@ function renderInk() {
     ctx.restore();
   }
 
-  // Live particles — Warmte: large additive heat bloom / Concentratie: bright sparkle dots
-  ctx.save();
-  ctx.globalCompositeOperation = (inkMode === 'warmte') ? 'lighter' : 'source-over';
-  for (var i = 0; i < inkParticles.length; i++) {
-    var p = inkParticles[i];
-    if (inkMode === 'warmte') {
+  // Live particles — pass 1 (Warmte only): additive heat bloom atmosphere
+  if (inkMode === 'warmte') {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < inkParticles.length; i++) {
+      var p = inkParticles[i];
       var gradP = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*5.5);
       var rgb = inkColorRGB(p.temp);
       gradP.addColorStop(0,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.92)');
@@ -993,13 +993,27 @@ function renderInk() {
       gradP.addColorStop(1,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r*5.5, 0, Math.PI*2);
       ctx.fillStyle = gradP; ctx.fill();
-    } else {
-      var gradC = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 4.5);
-      gradC.addColorStop(0,   'rgba(90,145,240,0.60)');
-      gradC.addColorStop(0.5, 'rgba(55,105,215,0.20)');
-      gradC.addColorStop(1,   'rgba(30,80,200,0)');
-      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, Math.PI*2);
-      ctx.fillStyle = gradC; ctx.fill();
+    }
+    ctx.restore();
+  }
+  // Pass 2 (both modes): 3D molecule spheres — identical look to sandbox particles
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  for (var mi = 0; mi < inkParticles.length; mi++) {
+    var mp = inkParticles[mi];
+    var sr = Math.max(2.5, mp.r * 1.3);
+    var mrgb = (inkMode === 'warmte') ? inkColorRGB(mp.temp) : [30, 70, 200];
+    var mr2 = mrgb[0], mg2 = mrgb[1], mb2 = mrgb[2];
+    var gSph = ctx.createRadialGradient(mp.x-sr*0.32, mp.y-sr*0.38, sr*0.04, mp.x, mp.y, sr);
+    gSph.addColorStop(0,    'rgba(255,255,255,0.75)');
+    gSph.addColorStop(0.28, 'rgba('+mr2+','+mg2+','+mb2+',1)');
+    gSph.addColorStop(0.80, 'rgba('+mr2+','+mg2+','+mb2+',0.88)');
+    gSph.addColorStop(1,    'rgba(0,0,0,0.60)');
+    ctx.beginPath(); ctx.arc(mp.x, mp.y, sr, 0, Math.PI*2);
+    ctx.fillStyle = gSph; ctx.fill();
+    if (sr > 3) {
+      ctx.beginPath(); ctx.arc(mp.x-sr*0.28, mp.y-sr*0.32, sr*0.18, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,0.30)'; ctx.fill();
     }
   }
   ctx.restore();
