@@ -837,16 +837,39 @@ function renderInk() {
   if (!glowOffscreen) { glowOffscreen = document.createElement('canvas'); glowOffCtx = glowOffscreen.getContext('2d'); }
   if (glowOffscreen.width !== W || glowOffscreen.height !== H) { glowOffscreen.width = W; glowOffscreen.height = H; }
 
-  ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, 0, W, H);
+  // Outer background
+  ctx.fillStyle = '#040609'; ctx.fillRect(0, 0, W, H);
 
-  // Water fill — Concentratie uses light blue-grey for contrast
-  var wc0 = (inkMode === 'concentratie') ? '#bcd4e6' : '#003366';
-  var wc1 = (inkMode === 'concentratie') ? '#a8c8df' : '#001a33';
-  var wgrad = ctx.createLinearGradient(b.x, b.y, b.x, b.y+b.h);
-  wgrad.addColorStop(0, wc0); wgrad.addColorStop(1, wc1);
-  ctx.fillStyle = wgrad; ctx.fillRect(b.x, b.y, b.w, b.h);
+  // Water fill — deep radial gradient for glass-container depth
+  var wGrad;
+  if (inkMode === 'warmte') {
+    wGrad = ctx.createRadialGradient(b.x+b.w*0.42, b.y+b.h*0.38, 0, b.x+b.w/2, b.y+b.h*0.6, b.h*0.76);
+    wGrad.addColorStop(0,   '#004590');
+    wGrad.addColorStop(0.4, '#002a60');
+    wGrad.addColorStop(1,   '#000e22');
+  } else {
+    wGrad = ctx.createRadialGradient(b.x+b.w*0.5, b.y+b.h*0.32, b.h*0.02, b.x+b.w/2, b.y+b.h*0.56, b.h*0.73);
+    wGrad.addColorStop(0,   '#ddeef8');
+    wGrad.addColorStop(0.55, '#b5d5ec');
+    wGrad.addColorStop(1,   '#82b2d0');
+  }
+  ctx.fillStyle = wGrad; ctx.fillRect(b.x, b.y, b.w, b.h);
 
-  // Concentration grid — faint ambient glow only (trails are now the dominant Concentratie visual)
+  // Caustic light rays at water surface (Concentratie — visible in clear water)
+  if (inkMode === 'concentratie') {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h*0.18); ctx.clip();
+    for (var ci = 0; ci < 8; ci++) {
+      var cxr = b.x + b.w * (0.07 + ci*0.12 + Math.sin(inkTime*0.8 + ci)*0.028);
+      var cGr = ctx.createLinearGradient(cxr, b.y, cxr+5, b.y+b.h*0.15);
+      cGr.addColorStop(0, 'rgba(210,242,255,0.11)');
+      cGr.addColorStop(1, 'rgba(210,242,255,0)');
+      ctx.fillStyle = cGr; ctx.fillRect(cxr-4, b.y, 10, b.h*0.15);
+    }
+    ctx.restore();
+  }
+
+  // Concentration grid — faint ambient halo
   if (inkMode === 'concentratie' && CGRID_ROWS > 0) {
     concOffCtx.clearRect(b.x, b.y, b.w, b.h);
     var cw = b.w / CGRID_COLS, ch = b.h / CGRID_ROWS;
@@ -854,7 +877,7 @@ function renderInk() {
       for (var gj = 0; gj < CGRID_COLS; gj++) {
         var cv = Math.min(1, C_GRID[gi*CGRID_COLS+gj] / 3);
         if (cv < 0.008) continue;
-        concOffCtx.fillStyle = 'rgba(26,10,46,'+(cv*0.22).toFixed(2)+')';  // max ~0.22 — subtle halo
+        concOffCtx.fillStyle = 'rgba(20,50,160,'+(cv*0.18).toFixed(2)+')';
         concOffCtx.fillRect(b.x + gj*cw, b.y + gi*ch, cw+1, ch+1);
       }
     }
@@ -867,11 +890,11 @@ function renderInk() {
   }
 
   // Left-wall glass sheen
-  var sheen = ctx.createLinearGradient(b.x, b.y, b.x+10, b.y);
-  sheen.addColorStop(0, 'rgba(136,204,255,0.12)'); sheen.addColorStop(1, 'rgba(136,204,255,0)');
-  ctx.fillStyle = sheen; ctx.fillRect(b.x, b.y, 10, b.h);
+  var sheen = ctx.createLinearGradient(b.x, b.y, b.x+14, b.y);
+  sheen.addColorStop(0, 'rgba(200,235,255,0.18)'); sheen.addColorStop(1, 'rgba(200,235,255,0)');
+  ctx.fillStyle = sheen; ctx.fillRect(b.x, b.y, 14, b.h);
 
-  // Air particles (simple dots falling in air zone)
+  // Air particles
   for (var ai = 0; ai < inkAirParticles.length; ai++) {
     var ap = inkAirParticles[ai];
     var rgb2 = inkColorRGB(ap.temp);
@@ -879,61 +902,76 @@ function renderInk() {
     ctx.fillStyle = 'rgba('+rgb2[0]+','+rgb2[1]+','+rgb2[2]+',0.85)'; ctx.fill();
   }
 
-  // Trail canvas — Concentratie: slowly-fading accumulated paths (primary visual)
+  // Trail canvas — Concentratie: volumetric ink cloud accumulation (20px blobs)
   if (inkMode === 'concentratie' && inkParticles.length > 0) {
-    // Slow fade: 0.026/frame → trails persist ~38 frames (~0.63s) for filament build-up
-    inkTrailCtx.fillStyle = 'rgba(188,212,230,0.026)';
+    inkTrailCtx.fillStyle = 'rgba(194,224,240,0.022)';
     inkTrailCtx.fillRect(b.x, b.y, b.w, b.h);
     inkTrailCtx.globalCompositeOperation = 'source-over';
     for (var ti = 0; ti < inkParticles.length; ti++) {
       var tp = inkParticles[ti];
-      var gT = inkTrailCtx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, 2.5);
-      gT.addColorStop(0,   'rgba(26,10,46,0.42)');
-      gT.addColorStop(0.6, 'rgba(26,10,46,0.12)');
-      gT.addColorStop(1,   'rgba(26,10,46,0)');
-      inkTrailCtx.beginPath(); inkTrailCtx.arc(tp.x, tp.y, 2.5, 0, Math.PI*2);
+      var gT = inkTrailCtx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, 20);
+      gT.addColorStop(0,    'rgba(22,52,185,0.055)');
+      gT.addColorStop(0.35, 'rgba(28,68,200,0.025)');
+      gT.addColorStop(0.7,  'rgba(38,88,212,0.008)');
+      gT.addColorStop(1,    'rgba(55,108,225,0)');
+      inkTrailCtx.beginPath(); inkTrailCtx.arc(tp.x, tp.y, 20, 0, Math.PI*2);
       inkTrailCtx.fillStyle = gT; inkTrailCtx.fill();
     }
     ctx.save();
     ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+    // Pass 1: cloud body
     ctx.drawImage(inkTrailCanvas, 0, 0);
+    // Pass 2: soft glow halo for 3D volumetric look
+    ctx.filter = 'blur(16px)';
+    ctx.globalAlpha = 0.52;
+    ctx.drawImage(inkTrailCanvas, 0, 0);
+    ctx.globalAlpha = 1; ctx.filter = 'none';
     ctx.restore();
   }
 
-  // Live ink particles — Warmte: additive heat glow / Concentratie: visible organic dots
+  // Live particles — Warmte: large additive heat bloom / Concentratie: bright sparkle dots
   ctx.save();
   ctx.globalCompositeOperation = (inkMode === 'warmte') ? 'lighter' : 'source-over';
   for (var i = 0; i < inkParticles.length; i++) {
     var p = inkParticles[i];
     if (inkMode === 'warmte') {
-      var gradP = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*2.5);
+      var gradP = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*5.5);
       var rgb = inkColorRGB(p.temp);
-      gradP.addColorStop(0,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.80)');
-      gradP.addColorStop(0.45, 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.28)');
+      gradP.addColorStop(0,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.92)');
+      gradP.addColorStop(0.30, 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.38)');
+      gradP.addColorStop(0.65, 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0.09)');
       gradP.addColorStop(1,    'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+',0)');
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.5, 0, Math.PI*2);
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r*5.5, 0, Math.PI*2);
       ctx.fillStyle = gradP; ctx.fill();
     } else {
-      // Concentratie: 2.5px soft dot — visible texture within the trail field
-      var gradC = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 2.5);
-      gradC.addColorStop(0,   'rgba(26,10,46,0.40)');
-      gradC.addColorStop(0.7, 'rgba(26,10,46,0.10)');
-      gradC.addColorStop(1,   'rgba(26,10,46,0)');
-      ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2);
+      var gradC = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 4.5);
+      gradC.addColorStop(0,   'rgba(90,145,240,0.60)');
+      gradC.addColorStop(0.5, 'rgba(55,105,215,0.20)');
+      gradC.addColorStop(1,   'rgba(30,80,200,0)');
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, Math.PI*2);
       ctx.fillStyle = gradC; ctx.fill();
     }
   }
+  ctx.restore();
+
+  // Vignette — glass-container depth & cinematic look
+  ctx.save();
+  ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+  var vig = ctx.createRadialGradient(b.x+b.w/2, b.y+b.h*0.44, b.h*0.27, b.x+b.w/2, b.y+b.h*0.50, b.h*0.73);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, (inkMode === 'warmte') ? 'rgba(0,4,12,0.50)' : 'rgba(0,8,20,0.40)');
+  ctx.fillStyle = vig; ctx.fillRect(b.x, b.y, b.w, b.h);
   ctx.restore();
 
   // Splash FX
   for (var si2 = 0; si2 < splashFX.length; si2++) {
     var s = splashFX[si2];
     ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2);
-    ctx.strokeStyle = 'rgba(136,204,255,'+s.alpha.toFixed(2)+')';
+    ctx.strokeStyle = 'rgba(160,220,255,'+s.alpha.toFixed(2)+')';
     ctx.lineWidth = 1.5; ctx.stroke();
   }
 
-  // Wall heat glow — offscreen + large blur, NO hard clip → fades naturally into dark background
+  // Wall heat glow — offscreen + large blur, no clip
   if (inkMode === 'warmte') {
     glowOffCtx.clearRect(0, 0, W, H);
     var segLen = 2*(b.w+b.h) / WALL_N;
@@ -941,27 +979,44 @@ function renderInk() {
     for (var wi = 0; wi < WALL_N; wi++) {
       var wt = wallTemp[wi];
       if (wt < 0.005) continue;
-      var wp = wallSegmentPos(wi, b);
+      var wpPos = wallSegmentPos(wi, b);
       var wrgb = inkColorRGB(Math.min(1, wt*2));
       var walpha = 0.15 + 0.85 * Math.min(1, wt);
       glowOffCtx.strokeStyle = 'rgba('+wrgb[0]+','+wrgb[1]+','+wrgb[2]+','+walpha.toFixed(2)+')';
       glowOffCtx.beginPath();
       var hl = segLen * 0.5;
-      if (wp.horiz) { glowOffCtx.moveTo(wp.x-hl, wp.y); glowOffCtx.lineTo(wp.x+hl, wp.y); }
-      else          { glowOffCtx.moveTo(wp.x, wp.y-hl);  glowOffCtx.lineTo(wp.x, wp.y+hl); }
+      if (wpPos.horiz) { glowOffCtx.moveTo(wpPos.x-hl, wpPos.y); glowOffCtx.lineTo(wpPos.x+hl, wpPos.y); }
+      else             { glowOffCtx.moveTo(wpPos.x, wpPos.y-hl);  glowOffCtx.lineTo(wpPos.x, wpPos.y+hl); }
       glowOffCtx.stroke();
     }
     ctx.save();
     ctx.filter = 'blur(22px)';
-    ctx.drawImage(glowOffscreen, 0, 0);  // no clip: blurred glow tapers into dark bg naturally
+    ctx.drawImage(glowOffscreen, 0, 0);
     ctx.filter = 'none';
     ctx.restore();
   }
 
-  // Glass border (drawn last, on top of glow)
-  ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2;
+  // Glass beaker — inner edge shadows + lit/shadow sides + border
+  ctx.save();
+  ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+  var iShadL = ctx.createLinearGradient(b.x, b.y, b.x+20, b.y);
+  iShadL.addColorStop(0, 'rgba(0,8,28,0.32)'); iShadL.addColorStop(1, 'rgba(0,8,28,0)');
+  ctx.fillStyle = iShadL; ctx.fillRect(b.x, b.y, 20, b.h);
+  var iShadR = ctx.createLinearGradient(b.x+b.w, b.y, b.x+b.w-20, b.y);
+  iShadR.addColorStop(0, 'rgba(0,8,28,0.24)'); iShadR.addColorStop(1, 'rgba(0,8,28,0)');
+  ctx.fillStyle = iShadR; ctx.fillRect(b.x+b.w-20, b.y, 20, b.h);
+  ctx.restore();
+  // Main border
+  ctx.strokeStyle = 'rgba(150,215,255,0.50)'; ctx.lineWidth = 1.5;
   ctx.strokeRect(b.x, b.y, b.w, b.h);
-  ctx.font = '9px monospace'; ctx.fillStyle = 'rgba(136,204,255,0.4)';
+  // Lit edge (top-left)
+  ctx.strokeStyle = 'rgba(225,248,255,0.85)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(b.x, b.y+b.h); ctx.lineTo(b.x, b.y); ctx.lineTo(b.x+b.w, b.y); ctx.stroke();
+  // Shadow edge (bottom-right)
+  ctx.strokeStyle = 'rgba(30,70,110,0.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(b.x+b.w, b.y); ctx.lineTo(b.x+b.w, b.y+b.h); ctx.lineTo(b.x, b.y+b.h); ctx.stroke();
+
+  ctx.font = '9px monospace'; ctx.fillStyle = 'rgba(180,230,255,0.50)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   ctx.fillText('H₂O', b.x+b.w/2, b.y-5);
 
